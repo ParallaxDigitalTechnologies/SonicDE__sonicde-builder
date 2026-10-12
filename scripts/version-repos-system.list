@@ -1,0 +1,9 @@
+# System release repositories. Latest SonicDE tags: 26.08.0[.patch].
+# Maintained explicitly; CMake files do not determine membership.
+sonic-accounts-integration
+sonic-ecco
+sonic-exiv2-library
+sonic-frameworks-io-extras
+sonic-partition-manager
+sonic-system-log
+sonic-terminal

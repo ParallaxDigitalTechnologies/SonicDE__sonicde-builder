@@ -21,48 +21,71 @@ howto:
 * check for missing GitHub repos: `./check-new-repos`
 * list OS packages to install: `./install-deps`
 * merge per-project graphify graphs: `./merge-graphs`
-* bump Plasma version and tag: `./version-bump-plasma 6.7.5`
-* bump Frameworks version and tag: `./version-bump-frameworks 6.30.0`
-* bump System version and tag: `./version-bump-system 26.04.3`
+* bump Plasma version and tag: `./version-bump-plasma 6.7.6`
+* bump Frameworks version and tag: `./version-bump-frameworks 6.31.0`
+* bump System version and tag: `./version-bump-system 26.08.1`
 * list repos in a category: `./version-bump-plasma --list`
 
 version bumps:
 --------------
 
-Three scripts bump the version across all repos in a release group.
-Each script identifies its repos by the version-variable pattern in
-`CMakeLists.txt` (not tags), updates the version, commits, and creates
-a `v<version>` tag.  Unlike KDE's release scripts, no second "bump to
-next dev version" commit is created -- we make patch releases against
-these tagged versions (e.g. `6.7.4.1`).
+Three scripts release all repositories in three explicitly maintained lists:
 
-    ./version-bump-plasma 6.7.5
-    ./version-bump-frameworks 6.30.0
-    ./version-bump-system 26.04.3
+* Plasma: `scripts/version-repos-plasma.list`
+* Frameworks: `scripts/version-repos-frameworks.list`
+* System: `scripts/version-repos-system.list`
 
-The version must be in `X.Y.Z` format.  Repos already at the target
-version are skipped.  Use `--dry-run` to preview:
+The lists were populated from the latest SonicDE release tags in each
+repository (`6.7.5[.patch]`, `6.30.0[.patch]`, and `26.08.0[.patch]`,
+respectively). Repositories with different version schemes are excluded.
+The scripts read these lists as-is; they do not discover repositories by
+searching CMake files or tags at release time. Maintain the lists explicitly
+when a repository joins or leaves a release group.
 
-    ./version-bump-plasma 6.7.5 --dry-run
+For each listed repository, the script performs these steps in order:
 
-Use `--list` to print the matching repos without modifying anything:
+1. Update existing release-version fields in `CMakeLists.txt`, if present.
+2. Commit the CMake change only if the file actually changed.
+3. Create the `<version>` tag (without a `v` prefix), then push the commit
+   and tag to `origin` unless `--no-push` is specified.
+
+Repositories without a CMake file or matching release-version fields are
+still tagged. If CMake is already at the requested version but the tag is
+missing, the script creates the tag without an empty commit. Existing tags
+are never overwritten; repositories already carrying the requested tag are
+skipped. Unlike KDE's release scripts, no second "bump to next dev version"
+commit is created -- we make patch releases against these tagged versions
+(e.g. `6.7.4.1`).
+
+    ./version-bump-plasma 6.7.6
+    ./version-bump-frameworks 6.31.0
+    ./version-bump-system 26.08.1
+
+The version argument must be in `X.Y.Z` format. Use `--dry-run` to preview
+CMake changes and tags without modifying files, commits, tags, or remotes:
+
+    ./version-bump-plasma 6.7.6 --dry-run
+
+Use `--list` to print the maintained list without modifying anything:
 
     ./version-bump-plasma --list
     ./version-bump-frameworks --list
     ./version-bump-system --list
 
-**Plasma** repos use `set(PROJECT_VERSION "X.Y.Z")` in CMakeLists.txt.
-**Frameworks** repos use `set(KF_VERSION "X.Y.Z")` and additionally
-update `set(KF_DEP_VERSION "X.Y.Z")` and `find_package(ECM X.Y.Z)`
-when present.  **System** repos use the three
-`set(RELEASE_SERVICE_VERSION_MAJOR/MINOR/MICRO "X")` variables.
-
-Repos that don't follow these patterns (third-party libraries like
-QCA, PolkitQt, PulseAudioQt, etc.) are not managed by the bump
-scripts.
+The usual CMake edit patterns are `set(PROJECT_VERSION "X.Y.Z")` for
+**Plasma**, `set(KF_VERSION "X.Y.Z")` for **Frameworks**, and the three
+`set(RELEASE_SERVICE_VERSION_MAJOR/MINOR/MICRO "X")` variables for
+**System**. Frameworks also updates `set(KF_DEP_VERSION "X.Y.Z")` and
+literal `find_package(ECM X.Y.Z)` requirements when present. Plasma
+supports a literal `project(... VERSION X.Y.Z)` declaration, and
+`sonic-frameworks-cmake-modules` updates its existing `set(VERSION ...)`.
+These are editing rules, not membership tests. Missing fields are not
+invented; unrelated dependency and library ABI versions are left alone.
 
 Each script requires a clean working tree in every repo it touches.
-Repos with uncommitted changes are skipped with a warning.
+Repos with uncommitted tracked changes are skipped with a warning. Listed
+repositories whose checkouts are missing are also reported and skipped;
+they remain in the maintained release list.
 
 build and system installation:
 ------------------------------

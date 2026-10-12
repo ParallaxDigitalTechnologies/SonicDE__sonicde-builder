@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Version bump scripts for SonicDE repos.
 
-Identifies repos by their CMakeLists.txt version variable pattern, bumps the
-version, commits the change, and creates a tag.  Unlike KDE's release scripts,
+Reads the explicit Plasma, Frameworks, and System repository lists, updates
+existing release version fields in CMakeLists.txt, commits any change, and
+creates a tag even when no CMake version fields exist. Unlike KDE's release scripts,
 no second "bump to next dev version" commit is created -- we make patch
 releases against these tagged versions (e.g. 6.7.4.1).
 
@@ -24,9 +25,8 @@ from pathlib import Path
 # Category definitions
 # ---------------------------------------------------------------------------
 #
-# Each category is identified by a regex that matches the version-variable
-# declaration in CMakeLists.txt.  The *replace* function takes the file content
-# and the new version string and returns the updated content.
+# Repository membership comes only from version-repos-<category>.list.
+# These replacement functions edit existing release fields, not select repos.
 
 PLASMA_VAR = "PROJECT_VERSION"
 FRAMEWORKS_VAR = "KF_VERSION"
@@ -58,6 +58,14 @@ def _replace_ecm_version(content: str, version: str) -> str:
     return re.sub(pattern, rf'\g<1>{version}\g<2>', content)
 
 
+def _replace_plasma_version(content: str, version: str) -> str:
+    content = _replace_quoted_set(content, PLASMA_VAR, version)
+    # sonic-breeze-sddm declares its release version directly in project().
+    # Variable-based project versions are already handled by set() above.
+    pattern = r'(\bproject\s*\([^)]*?\bVERSION\s+)("?)(\d+\.\d+\.\d+(?:\.\d+)?)\2(?=\s|\))'
+    return re.sub(pattern, lambda match: f'{match[1]}{match[2]}{version}{match[2]}', content, count=1)
+
+
 def _replace_frameworks_version(content: str, version: str) -> str:
     """Update all three Frameworks version locations.
 
@@ -83,23 +91,13 @@ def _replace_system_version(content: str, version: str) -> str:
 
 CATEGORIES: dict[str, dict] = {
     "plasma": {
-        "match": re.compile(rf'set\s*\(\s*{re.escape(PLASMA_VAR)}\s+"6\.'),
-        "replace": lambda content, version: _replace_quoted_set(
-            content, PLASMA_VAR, version
-        ),
-        "current_prefix": "6.",
+        "replace": _replace_plasma_version,
     },
     "frameworks": {
-        "match": re.compile(rf'set\s*\(\s*{re.escape(FRAMEWORKS_VAR)}\s+"\d'),
         "replace": _replace_frameworks_version,
-        "current_prefix": None,
     },
     "system": {
-        "match": re.compile(
-            rf'set\s*\(\s*{re.escape(SYSTEM_VARS[0])}\s+"'
-        ),
         "replace": _replace_system_version,
-        "current_prefix": None,
     },
 }
 
@@ -124,24 +122,24 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
 
 
 def _find_repos(root: Path, category: str) -> list[str]:
-    """Return sorted list of repo names that belong to *category*."""
-    cat = CATEGORIES[category]
+    """Read the maintained list; never infer membership from CMake or tags."""
+    roster = root / "scripts" / f"version-repos-{category}.list"
     repos: list[str] = []
-    for cmake in sorted(root.glob("src/sonicde/*/CMakeLists.txt")):
-        try:
-            content = cmake.read_text(encoding="utf-8")
-        except OSError:
+    for number, line in enumerate(roster.read_text(encoding="utf-8").splitlines(), 1):
+        name = line.split("#", 1)[0].strip()
+        if not name:
             continue
-        if cat["match"].search(content):
-            repos.append(cmake.parent.name)
-    return repos
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
+            raise ValueError(f"{roster}:{number}: invalid repository name {name!r}")
+        if name in repos:
+            raise ValueError(f"{roster}:{number}: duplicate repository {name!r}")
+        repos.append(name)
+    return sorted(repos)
 
 
 def _get_current_version(cmake: Path, category: str) -> str | None:
     """Extract the current version from a CMakeLists.txt."""
     content = cmake.read_text(encoding="utf-8")
-    cat = CATEGORIES[category]
-
     if category == "system":
         majors = re.findall(
             rf'set\s*\(\s*{re.escape(SYSTEM_VARS[0])}\s+"([^"]*)"', content
@@ -188,33 +186,40 @@ def bump_category(
         repo_dir = root / "src" / "sonicde" / repo_name
         cmake = repo_dir / "CMakeLists.txt"
 
-        if not cmake.exists():
-            print(f"[{repo_name}] CMakeLists.txt missing, skipping",
+        # Do not accidentally run git in the enclosing builder repository.
+        if not (repo_dir / ".git").exists():
+            print(f"[{repo_name}] repository checkout missing, skipping",
                   file=sys.stderr)
             continue
 
-        current = _get_current_version(cmake, category)
-        if current == version:
-            print(f"[{repo_name}] already at {version}, skipping")
+        tag = version
+        existing_tag = _git(repo_dir, "show-ref", "--verify", "--quiet", f"refs/tags/{tag}")
+        if existing_tag.returncode == 0:
+            print(f"[{repo_name}] tag {tag} already exists, skipping")
+            continue
+        if existing_tag.returncode != 1:
+            print(f"[{repo_name}] cannot check tag {tag}: {existing_tag.stderr.strip()}", file=sys.stderr)
             continue
 
-        # Update the version
-        content = cmake.read_text(encoding="utf-8")
+        current = _get_current_version(cmake, category) if cmake.exists() else None
+        content = cmake.read_text(encoding="utf-8") if cmake.exists() else ""
         new_content = cat["replace"](content, version)
-        if new_content == content:
-            print(
-                f"[{repo_name}] version variable not found in CMakeLists.txt, "
-                f"skipping",
-                file=sys.stderr,
-            )
-            continue
+        if category == "frameworks" and repo_name == "sonic-frameworks-cmake-modules":
+            new_content = _replace_quoted_set(new_content, "VERSION", version)
+        cmake_changed = new_content != content
 
         if dry_run:
-            print(f"[{repo_name}] would bump {current} -> {version}")
+            if cmake_changed:
+                print(f"[{repo_name}] would bump {current or 'CMake version'} -> {version}, tag {tag}")
+            else:
+                print(f"[{repo_name}] would tag {tag} (no CMake version change)")
             continue
 
         # Check for dirty working tree
         status = _git(repo_dir, "status", "--porcelain", "--untracked-files=no")
+        if status.returncode != 0:
+            print(f"[{repo_name}] cannot check working tree: {status.stderr.strip()}", file=sys.stderr)
+            continue
         if status.stdout.strip():
             print(
                 f"[{repo_name}] working tree not clean, skipping",
@@ -222,22 +227,19 @@ def bump_category(
             )
             continue
 
-        # Write the updated CMakeLists.txt
-        cmake.write_text(new_content, encoding="utf-8")
-
-        # Commit
-        _git(repo_dir, "add", "CMakeLists.txt")
-        commit_msg = f"Release {version}"
-        commit_result = _git(repo_dir, "commit", "-m", commit_msg)
-        if commit_result.returncode != 0:
-            print(
-                f"[{repo_name}] commit failed: {commit_result.stderr}",
-                file=sys.stderr,
-            )
-            continue
+        # Commit only an actual CMake update; tag-only repos need no empty commit.
+        if cmake_changed:
+            cmake.write_text(new_content, encoding="utf-8")
+            add_result = _git(repo_dir, "add", "CMakeLists.txt")
+            if add_result.returncode != 0:
+                print(f"[{repo_name}] staging failed: {add_result.stderr.strip()}", file=sys.stderr)
+                continue
+            commit_result = _git(repo_dir, "commit", "-m", f"Release {version}")
+            if commit_result.returncode != 0:
+                print(f"[{repo_name}] commit failed: {commit_result.stderr}", file=sys.stderr)
+                continue
 
         # Create tag (don't overwrite if it exists)
-        tag = f"{version}"
         tag_result = _git(repo_dir, "tag", tag)
         if tag_result.returncode != 0:
             print(
@@ -245,9 +247,14 @@ def bump_category(
                 f"{tag_result.stderr.strip()}",
                 file=sys.stderr,
             )
-            # The commit is still valid even if the tag exists
+            continue
         else:
-            print(f"[{repo_name}] bumped {current} -> {version}, tagged {tag}")
+            if cmake_changed:
+                print(f"[{repo_name}] bumped {current or 'CMake version'} -> {version}, tagged {tag}")
+            elif current == version:
+                print(f"[{repo_name}] CMake already at {version}, tagged {tag}")
+            else:
+                print(f"[{repo_name}] tagged {tag} (no CMake version change)")
 
         # Push commit and tag to origin
         if push:
@@ -294,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--list",
         action="store_true",
-        help="List matching repos and exit",
+        help="Print the maintained repository list and exit",
     )
     parser.add_argument(
         "--root",
@@ -305,6 +312,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = Path(args.root) if args.root else Path(__file__).resolve().parent.parent
+
+    try:
+        _find_repos(root, args.category)
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
 
     if args.list:
         repos = _find_repos(root, args.category)

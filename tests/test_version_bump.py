@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """Tests for the version bump scripts.
 
-Creates local git repos with CMakeLists.txt files matching each category's
-version pattern, then verifies the bump, commit, and tag behavior.
+Creates local git repos and explicit release lists, then verifies CMake
+updates, commits, and tagging (including repositories without CMake).
 """
 import os
 import subprocess
@@ -29,11 +29,19 @@ class VersionBumpTestBase(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.root = Path(self.tmpdir.name)
+        (self.root / "scripts").mkdir()
+        for category in ("plasma", "frameworks", "system"):
+            (self.root / "scripts" / f"version-repos-{category}.list").write_text("")
 
     def tearDown(self):
         self.tmpdir.cleanup()
 
-    def _make_repo(self, name: str, cmake_content: str) -> Path:
+    def _list_repo(self, category: str, name: str):
+        roster = self.root / "scripts" / f"version-repos-{category}.list"
+        roster.write_text(roster.read_text() + name + "\n")
+
+    def _make_repo(self, name: str, cmake_content: str | None,
+                   category: str | None = None) -> Path:
         """Create a git repo under src/sonicde/<name> with a CMakeLists.txt.
 
         A bare ``origin`` remote is set up under ``origin/<name>.git`` so the
@@ -44,7 +52,10 @@ class VersionBumpTestBase(unittest.TestCase):
         git(repo, "init")
         git(repo, "config", "user.email", "test@test.com")
         git(repo, "config", "user.name", "Test")
-        (repo / "CMakeLists.txt").write_text(cmake_content)
+        if cmake_content is None:
+            (repo / "asset.txt").write_text("release asset\n")
+        else:
+            (repo / "CMakeLists.txt").write_text(cmake_content)
         git(repo, "add", ".")
         git(repo, "commit", "-m", "initial")
 
@@ -57,6 +68,19 @@ class VersionBumpTestBase(unittest.TestCase):
         branch = git(repo, "symbolic-ref", "--short", "HEAD").stdout.strip()
         git(repo, "config", f"branch.{branch}.remote", "origin")
         git(repo, "config", f"branch.{branch}.merge", f"refs/heads/{branch}")
+
+        # Existing test fixtures explicitly belong to these release lists.
+        # This setup does not exercise or depend on production discovery.
+        if category is None:
+            category = {
+                PLASMA_CMAKE: "plasma",
+                FRAMEWORKS_CMAKE: "frameworks",
+                FRAMEWORKS_CMAKE_NO_DEP: "frameworks",
+                SYSTEM_CMAKE: "system",
+                SYSTEM_CMAKE_SPACES: "system",
+            }.get(cmake_content)
+        if category:
+            self._list_repo(category, name)
         return repo
 
     def _run_bump(self, category: str, version: str,
@@ -375,6 +399,182 @@ class TestPush(VersionBumpTestBase):
         self.assertIn("would bump", r.stdout)
 
         self.assertEqual(git(origin, "tag", "-l").stdout.strip(), "")
+
+
+class TestExplicitReleaseLists(VersionBumpTestBase):
+
+    def test_unlisted_matching_cmake_is_not_discovered_or_modified(self):
+        repo = self._make_repo("sonic-unlisted", PLASMA_CMAKE, category="")
+        self.assertNotIn("sonic-unlisted", self._run_list("plasma").stdout)
+        result = self._run_bump("plasma", "6.7.6")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((repo / "CMakeLists.txt").read_text(), PLASMA_CMAKE)
+        self.assertEqual(git(repo, "tag", "-l").stdout.strip(), "")
+
+    def test_membership_does_not_change_with_cmake_content(self):
+        self._make_repo("sonic-listed", FRAMEWORKS_CMAKE, category="plasma")
+        self.assertIn("sonic-listed", self._run_list("plasma").stdout)
+        self.assertNotIn("sonic-listed", self._run_list("frameworks").stdout)
+
+    def test_list_includes_repo_without_cmake_and_missing_checkout(self):
+        self._make_repo("sonic-assets", None, category="plasma")
+        self._list_repo("plasma", "sonic-not-fetched")
+        result = self._run_list("plasma")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["sonic-assets", "sonic-not-fetched"])
+
+    def test_missing_roster_fails_instead_of_discovering_repos(self):
+        (self.root / "scripts" / "version-repos-plasma.list").unlink()
+        result = self._run_list("plasma")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("version-repos-plasma.list", result.stderr)
+
+    def test_duplicate_and_unsafe_entries_are_rejected(self):
+        for content in ("sonic-a\nsonic-a\n", "../sonic-a\n", "/tmp/repo\n"):
+            with self.subTest(content=content):
+                (self.root / "scripts" / "version-repos-plasma.list").write_text(content)
+                self.assertNotEqual(self._run_list("plasma").returncode, 0)
+
+    def test_missing_checkout_cannot_tag_builder(self):
+        self._list_repo("plasma", "sonic-missing")
+        result = self._run_bump("plasma", "6.7.6")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("repository checkout missing", result.stderr)
+        self.assertIn("processed 0", result.stdout)
+
+
+class TestTagOnlyReleases(VersionBumpTestBase):
+
+    def test_all_categories_tag_repos_without_cmake(self):
+        for category, version in (("plasma", "6.7.6"), ("frameworks", "6.31.0"), ("system", "26.08.1")):
+            with self.subTest(category=category):
+                name = f"sonic-assets-{category}"
+                repo = self._make_repo(name, None, category=category)
+                initial = git(repo, "rev-parse", "HEAD").stdout.strip()
+                result = self._run_bump(category, version)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse((repo / "CMakeLists.txt").exists())
+                self.assertEqual(git(repo, "rev-parse", "HEAD").stdout.strip(), initial)
+                self.assertEqual(git(repo, "rev-parse", version).stdout.strip(), initial)
+                origin = self.root / "origin" / f"{name}.git"
+                self.assertIn(version, git(origin, "tag", "-l").stdout.splitlines())
+
+    def test_versionless_cmake_is_unchanged_but_tagged(self):
+        content = 'cmake_minimum_required(VERSION 3.16)\nproject(assets LANGUAGES NONE)\n'
+        repo = self._make_repo("sonic-assets", content, category="plasma")
+        initial = git(repo, "rev-parse", "HEAD").stdout.strip()
+        result = self._run_bump("plasma", "6.7.6")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((repo / "CMakeLists.txt").read_text(), content)
+        self.assertEqual(git(repo, "rev-parse", "6.7.6").stdout.strip(), initial)
+
+    def test_current_cmake_without_tag_gets_tag_no_empty_commit(self):
+        repo = self._make_repo("sonic-current", PLASMA_CMAKE)
+        initial = git(repo, "rev-parse", "HEAD").stdout.strip()
+        result = self._run_bump("plasma", "6.7.4")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(git(repo, "rev-parse", "HEAD").stdout.strip(), initial)
+        self.assertEqual(git(repo, "rev-parse", "6.7.4").stdout.strip(), initial)
+
+    def test_existing_tag_never_moves_or_creates_release_commit(self):
+        repo = self._make_repo("sonic-tagged", PLASMA_CMAKE)
+        git(repo, "tag", "6.7.5")
+        initial = git(repo, "rev-parse", "6.7.5").stdout.strip()
+        result = self._run_bump("plasma", "6.7.5")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("tag 6.7.5 already exists", result.stdout)
+        self.assertEqual(git(repo, "rev-parse", "6.7.5").stdout.strip(), initial)
+        self.assertEqual(git(repo, "rev-parse", "HEAD").stdout.strip(), initial)
+        self.assertEqual((repo / "CMakeLists.txt").read_text(), PLASMA_CMAKE)
+
+    def test_dirty_tag_only_repo_is_skipped(self):
+        repo = self._make_repo("sonic-dirty", None, category="plasma")
+        (repo / "asset.txt").write_text("local changes\n")
+        result = self._run_bump("plasma", "6.7.6")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("working tree not clean", result.stderr)
+        self.assertNotIn("6.7.6", git(repo, "tag", "-l").stdout)
+
+    def test_tag_only_dry_run_does_not_modify_or_push(self):
+        repo = self._make_repo("sonic-assets", None, category="plasma")
+        result = self._run_bump("plasma", "6.7.6", ["--dry-run"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("would tag 6.7.6", result.stdout)
+        self.assertEqual(git(repo, "tag", "-l").stdout.strip(), "")
+        self.assertEqual(git(self.root / "origin" / "sonic-assets.git", "tag", "-l").stdout.strip(), "")
+
+    def test_tag_only_no_push_leaves_origin_untouched(self):
+        repo = self._make_repo("sonic-assets", None, category="plasma")
+        result = self._run_bump("plasma", "6.7.6", ["--no-push"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("6.7.6", git(repo, "tag", "-l").stdout.splitlines())
+        self.assertEqual(git(self.root / "origin" / "sonic-assets.git", "tag", "-l").stdout.strip(), "")
+
+    def test_independent_system_library_version_is_not_changed(self):
+        content = 'cmake_minimum_required(VERSION 3.16)\nproject(libkexiv2 VERSION "5.1.0")\n'
+        repo = self._make_repo("sonic-exiv2-library", content, category="system")
+        result = self._run_bump("system", "26.08.1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((repo / "CMakeLists.txt").read_text(), content)
+        self.assertIn("26.08.1", git(repo, "tag", "-l").stdout.splitlines())
+
+
+class TestExistingAlternativeVersionFields(VersionBumpTestBase):
+
+    def test_ecm_version_field_is_updated(self):
+        content = 'set(VERSION "6.30.0")\nproject(ECM VERSION "${VERSION}" LANGUAGES NONE)\n'
+        repo = self._make_repo("sonic-frameworks-cmake-modules", content, category="frameworks")
+        result = self._run_bump("frameworks", "6.31.0")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('set(VERSION "6.31.0")', (repo / "CMakeLists.txt").read_text())
+        self.assertIn("6.31.0", git(repo, "tag", "-l").stdout.splitlines())
+
+    def test_literal_plasma_project_version_is_updated(self):
+        for declaration in ('project(breeze VERSION 6.7.5 LANGUAGES CXX)', 'project(breeze VERSION "6.7.5" LANGUAGES CXX)'):
+            with self.subTest(declaration=declaration):
+                name = "sonic-breeze-quoted" if '"' in declaration else "sonic-breeze-unquoted"
+                content = 'cmake_minimum_required(VERSION 3.16)\n' + declaration + '\nset(KF6_MIN_VERSION "6.26.0")\n'
+                repo = self._make_repo(name, content, category="plasma")
+                result = self._run_bump("plasma", "6.7.6")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = content.replace("6.7.5", "6.7.6")
+                self.assertEqual((repo / "CMakeLists.txt").read_text(), expected)
+                self.assertIn("6.7.6", git(repo, "tag", "-l").stdout.splitlines())
+
+    def test_failed_cmake_commit_does_not_tag_or_push(self):
+        repo = self._make_repo("sonic-failed", PLASMA_CMAKE)
+        hook = repo / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+        result = self._run_bump("plasma", "6.7.5")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("commit failed", result.stderr)
+        self.assertEqual(git(repo, "tag", "-l").stdout.strip(), "")
+        origin = self.root / "origin" / "sonic-failed.git"
+        self.assertEqual(git(origin, "log", "-1", "--format=%s").stdout.strip(), "initial")
+
+
+class TestMaintainedLists(unittest.TestCase):
+
+    def test_lists_are_sorted_disjoint_and_include_known_exceptions(self):
+        lists = {}
+        for category in ("plasma", "frameworks", "system"):
+            lines = (SCRIPTS / f"version-repos-{category}.list").read_text().splitlines()
+            repos = [line for line in lines if line and not line.startswith("#")]
+            self.assertEqual(repos, sorted(set(repos)))
+            lists[category] = set(repos)
+        self.assertFalse(lists["plasma"] & lists["frameworks"])
+        self.assertFalse(lists["plasma"] & lists["system"])
+        self.assertFalse(lists["frameworks"] & lists["system"])
+        self.assertIn("sonic-breeze-sddm", lists["plasma"])
+        self.assertIn("sonic-thunderbolt", lists["plasma"])
+        self.assertIn("sonic-frameworks-cmake-modules", lists["frameworks"])
+        self.assertIn("sonic-exiv2-library", lists["system"])
+        all_repos = set().union(*lists.values())
+        for independent in ("sonic-crypto-library", "sonic-frameworks-io-fuse", "sonic-frameworks-quick-ui-addons", "sonic-frameworks-sso",
+                            "sonic-polkit", "sonic-pulseaudio-library", "sonic-pyside", "sonic-qt-accounts-library", "sonic-quick-image-editor",
+                            "sonic-silver-sddm", "sonic-l10n-templates"):
+            self.assertNotIn(independent, all_repos)
 
 
 if __name__ == "__main__":
