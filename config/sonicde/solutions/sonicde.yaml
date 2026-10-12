@@ -113,6 +113,7 @@ build:
     - sonicde/sonic-frameworks-windowsystem
     - sonicde/sonic-frameworks-xml-gui
     - sonicde/sonic-frameworks-zeroconf
+    - sonicde/sonic-gamma
     - sonicde/sonic-gtk-theme-bridge
     - sonicde/sonic-interface-libraries
     - sonicde/sonic-keybind-daemon

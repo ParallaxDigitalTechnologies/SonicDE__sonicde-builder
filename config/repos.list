@@ -95,6 +95,7 @@ sonic-frameworks-widgets-addons
 sonic-frameworks-windowsystem
 sonic-frameworks-xml-gui
 sonic-frameworks-zeroconf
+sonic-gamma
 sonic-gtk-theme-bridge
 sonic-interface-libraries
 sonic-keybind-daemon
