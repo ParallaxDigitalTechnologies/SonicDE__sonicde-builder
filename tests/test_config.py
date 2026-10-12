@@ -42,6 +42,60 @@ class TestPublicRepositoryUrls(unittest.TestCase):
         self.assertIn("sonicde/sonic-frameworks-io", package.depends)
 
 
+class TestPlasmaSyncBranches(unittest.TestCase):
+    def test_unmaintained_upstreams_are_standalone_but_still_plasma_releases(self):
+        root = Path(__file__).resolve().parent.parent
+        project = Project(root, root / "config/sonicde/solutions/sonicde.yaml")
+        project.load()
+        closure = project.build_closure()
+        roster = set((root / "scripts/version-repos-plasma.list").read_text().splitlines())
+        for name in ("sonic-drawing-tablet", "sonic-gamma", "sonic-win"):
+            with self.subTest(repository=name):
+                package = project.packages[f"sonicde/{name}"]
+                self.assertEqual(str(package.git.config["autopick.enabled"]).lower(), "false")
+                self.assertEqual(set(package.git.remotes), {"origin"})
+                self.assertNotIn("autopick.upstream", package.git.config)
+                self.assertNotIn("autopick.tracker", package.git.config)
+                self.assertIn(f"sonicde/{name}", closure.packages)
+                self.assertIn(name, roster)
+
+    def test_rdp_manifest_matches_release_repository_without_restoring_retired_library(self):
+        root = Path(__file__).resolve().parent.parent
+        project = Project(root, root / "config/sonicde/solutions/sonicde.yaml")
+        project.load()
+        rdp = project.packages["sonicde/sonic-rdp-server"]
+        self.assertTrue(rdp.git.remotes["origin"].url.endswith("/sonic-rdp-server.git"))
+        self.assertEqual(project.resolve_name("sonicde/sonic-rdp"), "sonicde/sonic-rdp-server")
+        self.assertNotIn("sonicde/sonic-plasma5-support-library", project.packages)
+        self.assertNotIn("sonicde/sonic-plasma5-support-library", project.build_closure().packages)
+
+    def test_shipped_plasma_branches_and_trackers_use_6_8(self):
+        """Check optional manifests as well as the normalized active closure."""
+        root = Path(__file__).resolve().parent.parent
+        project = Project(root, root / "config/sonicde/solutions/sonicde.yaml")
+        project.load()
+        plasma_packages = set()
+        for name, package in project.packages.items():
+            if not package.git:
+                continue
+            config = package.git.config
+            upstream = config.get("autopick.upstream", "")
+            tracker = config.get("autopick.tracker", "")
+            if upstream.startswith("upstream/Plasma/") or tracker.startswith("origin/tracking/plasma-"):
+                plasma_packages.add(name)
+                with self.subTest(package=name):
+                    self.assertEqual(upstream, "upstream/Plasma/6.8")
+                    self.assertEqual(tracker, "origin/tracking/plasma-6.8")
+        self.assertTrue(plasma_packages)
+
+        model = project.to_model(project.build_closure())
+        for name in plasma_packages & model["packages"].keys():
+            config = model["packages"][name]["git"]["config"]
+            with self.subTest(model_package=name):
+                self.assertEqual(config["autopick.upstream"], "upstream/Plasma/6.8")
+                self.assertEqual(config["autopick.tracker"], "origin/tracking/plasma-6.8")
+
+
 class TestConfigParsing(unittest.TestCase):
     """Test YAML parsing, interpolation, and closure resolution."""
 

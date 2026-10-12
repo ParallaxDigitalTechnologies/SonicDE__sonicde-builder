@@ -7,11 +7,42 @@
 set -euo pipefail
 
 CONFIRM=false
-for arg in "$@"; do
-    case "$arg" in
-        --yes|--confirm) CONFIRM=true ;;
+CATEGORY=""
+UPSTREAM_BRANCH=""
+ONLY_REPOS=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --yes|--confirm) CONFIRM=true; shift ;;
+        --category)
+            [ "$#" -ge 2 ] || { echo "--category requires plasma, frameworks, or system" >&2; exit 2; }
+            CATEGORY="$2"
+            case "$CATEGORY" in plasma|frameworks|system) ;; *) echo "Unknown category: $CATEGORY" >&2; exit 2 ;; esac
+            shift 2
+            ;;
+        --repo)
+            [ "$#" -ge 2 ] || { echo "--repo requires a repository name" >&2; exit 2; }
+            ONLY_REPOS+=("$2")
+            shift 2
+            ;;
+        --upstream-branch)
+            [ "$#" -ge 2 ] || { echo "--upstream-branch requires a branch name" >&2; exit 2; }
+            UPSTREAM_BRANCH="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "Usage: reset-trackers [--category plasma|frameworks|system] [--repo NAME ...] [--upstream-branch Plasma/6.8] [--yes|--confirm]"
+            echo "Without --yes, fetch and preview only; no trackers are changed."
+            exit 0
+            ;;
+        *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
 done
+[ -n "$CATEGORY" ] || {
+    if [ "${#ONLY_REPOS[@]}" -gt 0 ] || [ -n "$UPSTREAM_BRANCH" ]; then
+        echo "--repo and --upstream-branch require --category" >&2
+        exit 2
+    fi
+}
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -22,16 +53,85 @@ python3 scripts/config.py -root . \
     -out state/model.json
 python3 scripts/repositories.py -model state/model.json --view repo-list --out repo-list
 
-REPOS=$(cat repo-list)
+if [ -n "$CATEGORY" ]; then
+    # Use the maintained release list and declared settings, not stale checkout
+    # git config. In particular, a 6.8 reset must never update a 6.7 tracker.
+    SELECTION=$(python3 - "$CATEGORY" "$UPSTREAM_BRANCH" "${ONLY_REPOS[@]}" <<'PY'
+import subprocess
+import sys
+from pathlib import Path
+sys.path.insert(0, "scripts")
+from config import Project
+from version_bump import _find_repos
 
-for i in $REPOS ; do
+root = Path.cwd()
+project = Project(root, root / "config/sonicde/solutions/sonicde.yaml")
+project.load()
+names = _find_repos(root, sys.argv[1])
+branch = sys.argv[2]
+requested = set(sys.argv[3:])
+unknown = requested - set(names)
+if unknown:
+    sys.exit(f"Not in the {sys.argv[1]} release list: {', '.join(sorted(unknown))}")
+if branch and subprocess.run(["git", "check-ref-format", f"refs/heads/{branch}"], capture_output=True).returncode:
+    sys.exit(f"Invalid upstream branch: {branch!r}")
+for name in names:
+    if requested and name not in requested:
+        continue
+    package = project.packages.get(f"sonicde/{name}")
+    if package and package.git:
+        cfg = dict(package.git.config)
+    else:
+        # A release repo may have been intentionally retired from the build.
+        # Explicit branch selection allows recovery without restoring its build
+        # package or trusting an obsolete checkout branch/tracker unchanged.
+        checkout = root / "src/sonicde" / name
+        if not branch or not (checkout / ".git").exists():
+            print(f"[{name}] no matching package manifest; use --upstream-branch for an existing legacy checkout, skipping", file=sys.stderr)
+            continue
+        result = subprocess.run(["git", "config", "--get-regexp", r"^autopick\."], cwd=checkout,
+                                capture_output=True, text=True)
+        if result.returncode not in (0, 1):
+            sys.exit(f"[{name}] cannot read checkout autopick settings: {result.stderr.strip()}")
+        cfg = dict(line.split(None, 1) for line in result.stdout.splitlines())
+        print(f"[{name}] using existing checkout configuration with explicit branch {branch}", file=sys.stderr)
+    if str(cfg.get("autopick.enabled", "")).lower() != "true":
+        print(f"[{name}] no enabled autopick configuration, skipping", file=sys.stderr)
+        continue
+    keys = ("autopick.tracker", "autopick.master", "autopick.upstream")
+    if not all(cfg.get(key) for key in keys):
+        print(f"[{name}] incomplete autopick configuration, skipping", file=sys.stderr)
+        continue
+    if branch:
+        upstream_remote = cfg["autopick.upstream"].split("/", 1)[0]
+        tracker_remote = cfg["autopick.tracker"].split("/", 1)[0]
+        cfg["autopick.upstream"] = f"{upstream_remote}/{branch}"
+        cfg["autopick.tracker"] = f"{tracker_remote}/tracking/{branch.lower().replace('/', '-')}"
+    print("\t".join([name] + [cfg[key] for key in keys]))
+PY
+    )
+else
+    SELECTION=$(while read -r name; do printf '%s\n' "$name"; done < repo-list)
+fi
+
+UPDATED=0
+UNCHANGED=0
+FAILED=0
+while IFS=$'\t' read -r i declared_tracker declared_master declared_upstream; do
+    [ "$i" ] || continue
     dir="src/sonicde/$i"
-    [ -d "$dir/.git" ] || continue
+    [ -e "$dir/.git" ] || { echo "[$i] checkout missing, skipping"; continue; }
     cd "$dir" || continue
 
-    tracker=$(git config autopick.tracker || true)
-    master=$(git config autopick.master || true)
-    upstream=$(git config autopick.upstream || true)
+    if [ -n "$CATEGORY" ]; then
+        tracker="$declared_tracker"
+        master="$declared_master"
+        upstream="$declared_upstream"
+    else
+        tracker=$(git config autopick.tracker || true)
+        master=$(git config autopick.master || true)
+        upstream=$(git config autopick.upstream || true)
+    fi
 
     [ "$tracker" ] || { echo "[$i] no autopick.tracker, skipping"; cd - >/dev/null; continue; }
     [ "$master" ] || { echo "[$i] no autopick.master, skipping"; cd - >/dev/null; continue; }
@@ -40,44 +140,58 @@ for i in $REPOS ; do
     tracker_remote=$(echo "$tracker" | cut -d/ -f1)
     tracker_branch=$(echo "$tracker" | cut -d/ -f2-)
 
-    git fetch --quiet --prune origin 2>/dev/null || true
+    git fetch --quiet --prune origin 2>/dev/null || { echo "[$i] failed to fetch origin, skipping"; FAILED=$((FAILED + 1)); cd - >/dev/null; continue; }
     upstream_remote=$(echo "$upstream" | cut -d/ -f1)
-    git fetch --quiet --prune "$upstream_remote" 2>/dev/null || { echo "[$i] failed to fetch $upstream_remote, skipping"; cd - >/dev/null; continue; }
+    git fetch --quiet --prune "$upstream_remote" 2>/dev/null || { echo "[$i] failed to fetch $upstream_remote, skipping"; FAILED=$((FAILED + 1)); cd - >/dev/null; continue; }
 
-    master_sha=$(git rev-parse "$master" 2>/dev/null) || { echo "[$i] cant resolve master, skipping"; cd - >/dev/null; continue; }
-    upstream_sha=$(git rev-parse "$upstream" 2>/dev/null) || { echo "[$i] cant resolve upstream, skipping"; cd - >/dev/null; continue; }
+    master_sha=$(git rev-parse --verify "${master}^{commit}" 2>/dev/null) || { echo "[$i] cant resolve master, skipping"; FAILED=$((FAILED + 1)); cd - >/dev/null; continue; }
+    upstream_sha=$(git rev-parse --verify "${upstream}^{commit}" 2>/dev/null) || { echo "[$i] cant resolve upstream, skipping"; FAILED=$((FAILED + 1)); cd - >/dev/null; continue; }
     tracker_sha=$(git rev-parse "$tracker" 2>/dev/null) || tracker_sha=""
 
     # Find the last upstream commit patch-equivalent to a commit in master
     matched_upstream=$(git log --cherry-mark --right-only \
         --format='%m %H' "$master_sha"..."$upstream_sha" 2>/dev/null \
-        | awk '$1 == "=" { print $2; exit }')
+        | awk '$1 == "=" && !found { print $2; found=1 }')
 
     # Fall back to the literal merge base when no patch-equivalent commit exists
     if [ -z "$matched_upstream" ]; then
-        matched_upstream=$(git merge-base "$master_sha" "$upstream_sha" 2>/dev/null)
+        matched_upstream=$(git merge-base "$master_sha" "$upstream_sha" 2>/dev/null || true)
         reason="merge-base (no patch-equivalent commit found)"
     else
         reason="patch-equivalent commit"
     fi
 
-    [ "$matched_upstream" ] || { echo "[$i] histories have no shared commit, skipping"; cd - >/dev/null; continue; }
+    [ "$matched_upstream" ] || { echo "[$i] histories have no shared commit, skipping"; FAILED=$((FAILED + 1)); cd - >/dev/null; continue; }
 
     if [ "$tracker_sha" = "$matched_upstream" ]; then
         echo "[$i] tracker already at $matched_upstream ($reason), skipping"
+        UNCHANGED=$((UNCHANGED + 1))
         cd - >/dev/null
         continue
     fi
 
-    echo "[$i] setting tracker to $matched_upstream ($reason)"
+    echo "[$i] setting $tracker from $upstream to $matched_upstream ($reason)"
     if [ "$CONFIRM" = "true" ]; then
-        git push -q "$tracker_remote" "+${matched_upstream}:refs/heads/${tracker_branch}" || echo "[$i] failed to push tracker"
+        if git push -q "$tracker_remote" "+${matched_upstream}:refs/heads/${tracker_branch}"; then
+            remote_sha=$(git ls-remote "$tracker_remote" "refs/heads/${tracker_branch}" | cut -f1) || remote_sha=""
+            if [ "$remote_sha" = "$matched_upstream" ]; then
+                echo "[$i] tracker verified at $remote_sha"
+                UPDATED=$((UPDATED + 1))
+            else
+                echo "[$i] tracker verification failed"
+                FAILED=$((FAILED + 1))
+            fi
+        else
+            echo "[$i] failed to push tracker"
+            FAILED=$((FAILED + 1))
+        fi
     else
         echo "  (dry run - use --yes to apply)"
     fi
 
     cd - >/dev/null
-done
+done <<< "$SELECTION"
 
 echo ""
-echo "Done."
+echo "Done. Updated: $UPDATED; unchanged: $UNCHANGED; failed: $FAILED."
+[ "$FAILED" -eq 0 ]
