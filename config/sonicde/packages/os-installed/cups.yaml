@@ -1,0 +1,7 @@
+provides: sys/cups
+type: system
+cmake-packages: Cups 2.4
+platform-packages:
+    debian: libcups2-dev
+    devuan: libcups2-dev
+    arch: cups

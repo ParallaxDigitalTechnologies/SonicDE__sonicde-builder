@@ -12,6 +12,20 @@ SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from config import Project, ConfigError
+from repositories import (active_git, managed_sonicde, autopick_repos,
+                          post_autopick_repos, generate_repo_list, org_repo_names)
+
+
+PLASMA_67_REPOSITORIES = {
+    "sonic-power-management": "powerdevil",
+    "sonic-print-management": "print-manager",
+    "sonic-silver-sound-theme": "ocean-sound-theme",
+}
+
+NEW_PLASMA_REPOSITORIES = {
+    **PLASMA_67_REPOSITORIES,
+    "sonic-silver-sdk": "plasma-sdk",
+}
 
 
 class TestPublicRepositoryUrls(unittest.TestCase):
@@ -69,7 +83,7 @@ class TestPlasmaSyncBranches(unittest.TestCase):
         self.assertNotIn("sonicde/sonic-plasma5-support-library", project.packages)
         self.assertNotIn("sonicde/sonic-plasma5-support-library", project.build_closure().packages)
 
-    def test_shipped_plasma_branches_and_trackers_use_6_8(self):
+    def test_shipped_plasma_branches_and_trackers_use_configured_release(self):
         """Check optional manifests as well as the normalized active closure."""
         root = Path(__file__).resolve().parent.parent
         project = Project(root, root / "config/sonicde/solutions/sonicde.yaml")
@@ -83,17 +97,45 @@ class TestPlasmaSyncBranches(unittest.TestCase):
             tracker = config.get("autopick.tracker", "")
             if upstream.startswith("upstream/Plasma/") or tracker.startswith("origin/tracking/plasma-"):
                 plasma_packages.add(name)
+                branch = "6.7" if name.split("/")[-1] in PLASMA_67_REPOSITORIES else "6.8"
                 with self.subTest(package=name):
-                    self.assertEqual(upstream, "upstream/Plasma/6.8")
-                    self.assertEqual(tracker, "origin/tracking/plasma-6.8")
+                    self.assertEqual(upstream, f"upstream/Plasma/{branch}")
+                    self.assertEqual(tracker, f"origin/tracking/plasma-{branch}")
         self.assertTrue(plasma_packages)
 
         model = project.to_model(project.build_closure())
         for name in plasma_packages & model["packages"].keys():
             config = model["packages"][name]["git"]["config"]
+            branch = "6.7" if name.split("/")[-1] in PLASMA_67_REPOSITORIES else "6.8"
             with self.subTest(model_package=name):
-                self.assertEqual(config["autopick.upstream"], "upstream/Plasma/6.8")
-                self.assertEqual(config["autopick.tracker"], "origin/tracking/plasma-6.8")
+                self.assertEqual(config["autopick.upstream"], f"upstream/Plasma/{branch}")
+                self.assertEqual(config["autopick.tracker"], f"origin/tracking/plasma-{branch}")
+
+    def test_new_plasma_repositories_are_in_all_applicable_lists(self):
+        root = Path(__file__).resolve().parent.parent
+        project = Project(root, root / "config/sonicde/solutions/sonicde.yaml")
+        project.load()
+        model = project.to_model(project.build_closure())
+        roster = (root / "scripts/version-repos-plasma.list").read_text().splitlines()
+        for name, upstream in NEW_PLASMA_REPOSITORIES.items():
+            key = f"sonicde/{name}"
+            branch = "6.7" if name in PLASMA_67_REPOSITORIES else "6.8"
+            with self.subTest(repository=name):
+                self.assertEqual(project.solution["build"].count(key), 1)
+                self.assertEqual(roster.count(name), 1)
+                package = model["packages"][key]
+                self.assertEqual(package["buildsystem"], "cmake")
+                git = package["git"]
+                self.assertEqual(git["ref"], "origin/master")
+                self.assertEqual(git["local_branch"], "master")
+                self.assertEqual(git["remotes"]["origin"]["url"], f"https://github.com/Sonic-DE/{name}.git")
+                self.assertEqual(git["remotes"]["upstream"]["url"], f"https://invent.kde.org/plasma/{upstream}.git")
+                self.assertEqual(git["config"]["autopick.upstream"], f"upstream/Plasma/{branch}")
+                self.assertEqual(git["config"]["autopick.tracker"], f"origin/tracking/plasma-{branch}")
+                for view in (active_git, managed_sonicde, autopick_repos, post_autopick_repos):
+                    self.assertIn(key, view(model), view.__name__)
+                self.assertEqual(generate_repo_list(model).count(name), 1)
+                self.assertEqual(org_repo_names(model).count(name), 1)
 
 
 class TestConfigParsing(unittest.TestCase):

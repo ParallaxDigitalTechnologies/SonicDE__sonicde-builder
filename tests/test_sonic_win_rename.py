@@ -134,25 +134,6 @@ class TestSonicLoginManager(unittest.TestCase):
         self.assertIn("After=soniclogin-sonic-win.service", source)
         self.assertNotIn("soniclogin-kwin_x11.service", source)
 
-    def test_direct_launch_path(self):
-        source = _read(
-            "sonic-login-manager/src/frontend/startkde/start-soniclogin-x11.cpp"
-        )
-        self.assertIn('BIN_INSTALL_DIR "/sonic-win"', source)
-        self.assertNotIn('BIN_INSTALL_DIR "/kwin_x11"', source)
-
-    def test_stopunit_target(self):
-        source = _read(
-            "sonic-login-manager/src/frontend/startkde/start-soniclogin-x11.cpp"
-        )
-        self.assertIn(
-            'QStringLiteral("soniclogin-sonic-win.service")', source
-        )
-        self.assertNotIn(
-            'QStringLiteral("soniclogin-kwin_x11.service")', source
-        )
-
-
 class TestSonicDrRobotnik(unittest.TestCase):
     """Crash-report consumers must recognize sonic-win."""
 

@@ -176,6 +176,61 @@ if [ -n "$master_pid" ] && [ "$master_pid" = "$upstream_pid" ]; then
     exit 0
 fi
 
+# gh can report only a JSON decoding error for an empty JSON error response.
+# Retain the HTTP status so temporary server failures can be distinguished from
+# authentication/validation errors. These additive metadata POSTs are safe to
+# repeat; PR creation and tracker updates must not use this retry helper.
+post_pr_metadata() {
+    local endpoint="$1" response protocol status reason attempt rc
+    shift
+    for attempt in 1 2 3; do
+        if response=$(NO_COLOR=1 gh api --method POST "$endpoint" "$@" --include); then
+            return 0
+        else
+            rc=$?
+        fi
+        read -r protocol status reason <<< "$response"
+        if [[ "$protocol" == HTTP/* && "$status" =~ ^[0-9]{3}$ ]]; then
+            msg "metadata request $endpoint failed with HTTP $status (attempt $attempt/3)"
+        fi
+        case "$protocol:$status" in
+            HTTP/*:500|HTTP/*:502|HTTP/*:503|HTTP/*:504)
+                if [ "$attempt" -lt 3 ]; then
+                    sleep "$attempt"
+                    continue
+                fi
+                ;;
+        esac
+        return "$rc"
+    done
+}
+
+# Keep metadata out of gh pr create: gh performs those updates using separate
+# GraphQL mutations after creating the PR. Use the REST endpoints explicitly,
+# and require every operation to succeed before the caller advances the tracker.
+create_sync_pr() {
+    local repo="$1" body="$2" assignee url number
+    assignee=$(gh api user --jq '.login') \
+        || die "cannot determine PR assignee; tracker unchanged"
+    [ -n "$assignee" ] || die "empty PR assignee; tracker unchanged"
+
+    url=$(gh pr create --repo "$repo" \
+        --title "automatic backport" --body "$body" \
+        -B "$AUTOPICK_MASTER_BRANCH" -H "$TEMP_BRANCH") \
+        || die "PR creation failed; tracker unchanged"
+    printf '%s\n' "$url"
+    number=${url##*/}
+    [[ "$number" =~ ^[0-9]+$ ]] \
+        || die "cannot determine created PR number from $url; tracker unchanged"
+
+    post_pr_metadata "repos/$repo/issues/$number/assignees" \
+        -f "assignees[]=$assignee" \
+        || die "PR #$number created, but assigning $assignee failed; tracker unchanged"
+    post_pr_metadata "repos/$repo/pulls/$number/requested_reviewers" \
+        -f 'team_reviewers[]=dev' \
+        || die "PR #$number created, but requesting dev review failed; tracker unchanged"
+}
+
 # check the remote temp branch:
 # - if it exists with unmerged commits and no PR, create a PR and exit
 # - if it exists with an open PR, skip (message and exit)
@@ -209,12 +264,7 @@ check_work_waiting() {
     if [ "$ahead" -gt 0 ]; then
         msg "=== creating PR for existing branch $TEMP_BRANCH with $ahead unmerged commits"
         gh repo set-default "$remote_url"
-        gh pr create -a "@me" \
-            --title "automatic backport" \
-            --body "upstream range (see tracker)" \
-            -B "$AUTOPICK_MASTER_BRANCH" \
-            -H "$TEMP_BRANCH" \
-            --reviewer "Sonic-DE/dev"
+        create_sync_pr "$remote_url" "upstream range (see tracker)"
         update_tracker
         exit 0
     fi
@@ -349,10 +399,6 @@ fi
 msg "=== pushing branch $TEMP_BRANCH and creating PR"
 git push $AUTOPICK_MASTER_REMOTE $TEMP_BRANCH
 gh repo set-default "$(git config --get remote.origin.url | sed 's|.*github.com[:/]||' | sed 's|\.git$||')"
-gh pr create -a "@me" \
-    --title "automatic backport" \
-    --body "upstream range $CURRENT_TRACKER..$AUTOPICK_UPSTREAM" \
-    -B "$AUTOPICK_MASTER_BRANCH" \
-    -H "$TEMP_BRANCH" \
-    --reviewer "Sonic-DE/dev"
+create_sync_pr "$(git config --get remote.origin.url | sed 's|.*github.com[:/]||' | sed 's|\.git$||')" \
+    "upstream range $CURRENT_TRACKER..$AUTOPICK_UPSTREAM"
 update_tracker

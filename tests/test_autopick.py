@@ -5,11 +5,14 @@
 No remote GitHub repositories are contacted. All Git operations use local
 bare repos. The tracker is a branch on origin (matching real SonicDE setup).
 """
+import http.server
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -220,6 +223,197 @@ exit 99
             "tracker did not advance to the processed upstream tip")
 
 
+class TestPrMetadata(AutopickTestBase):
+
+    def _run_sync(self, existing=False, fail="", open_pr=False,
+                  metadata_status=0, recover=False):
+        work, origin, upstream = self._setup_repo()
+        tracker_before = git(work, "rev-parse", "origin/tracking/master").stdout.strip()
+        tip = self._add_upstream_commits(upstream, 1)[-1]
+        git(work, "fetch", "upstream")
+        if existing:
+            git(work, "push", "origin",
+                f"{tip}:refs/heads/pr/sync-with-upstream")
+
+        calls = self.root / "gh-calls"
+        fake = self.root / "bin" / "gh"
+        fake.parent.mkdir()
+        retry_marker = self.root / "metadata-retried"
+        fake_sleep = fake.with_name("sleep")
+        fake_sleep.write_text("#!/bin/bash\nexit 0\n")
+        fake_sleep.chmod(0o755)
+        fake.write_text(f'''#!/bin/bash
+printf '%s\\n' "$*" >> "{calls}"
+case "$1 $2" in
+    "repo set-default") exit 0 ;;
+    "pr list")
+        if [ "{open_pr}" = True ]; then echo 6; fi
+        exit 0 ;;
+    "pr create")
+        for arg in "$@"; do
+            case "$arg" in
+                -a|--assignee|--reviewer) echo "unexpected GraphQL metadata" >&2; exit 2 ;;
+            esac
+        done
+        [ "{fail}" != create ] || {{ echo 'creation failed' >&2; exit 1; }}
+        echo 'https://github.com/Sonic-DE/test/pull/6'
+        exit 0 ;;
+    "api user")
+        [ "{fail}" != user ] || {{ echo 'user lookup failed' >&2; exit 1; }}
+        echo josephcrowell
+        exit 0 ;;
+    "api --method")
+        case "$4" in
+            repos/*/issues/6/assignees)
+                [ "{fail}" != assignee ] || {{ echo 'assignment failed' >&2; exit 1; }} ;;
+            repos/*/pulls/6/requested_reviewers)
+                [ "{fail}" != reviewer ] || {{ echo 'review request failed' >&2; exit 1; }}
+                [ "{fail}" != json_without_status ] || {{ echo 'unexpected end of JSON input' >&2; exit 1; }}
+                if [ "{metadata_status}" -ne 0 ]; then
+                    if [ "{recover}" != True ] || [ ! -f "{retry_marker}" ]; then
+                        touch "{retry_marker}"
+                        printf 'HTTP/2.0 {metadata_status} Error\\r\\nContent-Type: application/json\\r\\n\\r\\n'
+                        echo 'unexpected end of JSON input' >&2
+                        exit 1
+                    fi
+                fi ;;
+            *) exit 2 ;;
+        esac
+        exit 0 ;;
+    *) exit 2 ;;
+esac
+''')
+        fake.chmod(0o755)
+        result = subprocess.run(
+            [str(SCRIPTS / "git-autopick")], cwd=work,
+            capture_output=True, text=True,
+            env={**os.environ, "PATH": f"{fake.parent}:{os.environ['PATH']}"})
+        tracker_after = git(work, "rev-parse", "origin/tracking/master").stdout.strip()
+        commands = calls.read_text().splitlines()
+        review_calls = [c for c in commands if "requested_reviewers" in c]
+        if metadata_status:
+            expected_attempts = 2 if recover else (3 if metadata_status in (500, 502, 503, 504) else 1)
+            self.assertEqual(len(review_calls), expected_attempts, result.stderr)
+            self.assertIn("unexpected end of JSON input", result.stderr)
+            if metadata_status in (500, 502, 503, 504):
+                self.assertIn(f"failed with HTTP {metadata_status}", result.stderr)
+        if open_pr:
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(tracker_after, tracker_before)
+            self.assertFalse(any(c.startswith(("pr create", "api ")) for c in commands))
+            return
+        if fail or (metadata_status and not recover):
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(tracker_after, tracker_before)
+            self.assertIn("tracker unchanged", result.stderr)
+            if fail == "assignee":
+                self.assertNotIn("requested_reviewers", "\n".join(commands))
+            if fail == "json_without_status":
+                self.assertEqual(len(review_calls), 1)
+            return
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(tracker_after, tip)
+        self.assertEqual(len([c for c in commands if c.startswith("pr create")]), 1)
+        updates = [c for c in commands if c.startswith("api --method")]
+        repo = str(origin).removesuffix(".git")
+        expected_updates = [
+            f"api --method POST repos/{repo}/issues/6/assignees "
+            "-f assignees[]=josephcrowell --include",
+            f"api --method POST repos/{repo}/pulls/6/requested_reviewers "
+            "-f team_reviewers[]=dev --include",
+        ]
+        if metadata_status and recover:
+            expected_updates.append(expected_updates[-1])
+        self.assertEqual(updates, expected_updates)
+
+    def test_new_branch_requires_rest_metadata_before_tracker_update(self):
+        self._run_sync()
+
+    def test_existing_branch_requires_rest_metadata_before_tracker_update(self):
+        self._run_sync(existing=True)
+
+    def test_user_lookup_failure_preserves_tracker(self):
+        self._run_sync(fail="user")
+
+    def test_creation_failure_preserves_tracker(self):
+        self._run_sync(fail="create")
+
+    def test_assignee_failure_preserves_tracker(self):
+        self._run_sync(fail="assignee")
+
+    def test_reviewer_failure_preserves_tracker(self):
+        self._run_sync(fail="reviewer")
+
+    def test_existing_branch_reviewer_failure_preserves_tracker(self):
+        self._run_sync(existing=True, fail="reviewer")
+
+    def test_open_pr_skips_without_metadata_or_tracker_updates(self):
+        self._run_sync(existing=True, open_pr=True)
+
+    def test_empty_json_502_retries_existing_branch_metadata(self):
+        self._run_sync(existing=True, metadata_status=502, recover=True)
+
+    def test_empty_json_503_retries_new_branch_metadata(self):
+        self._run_sync(metadata_status=503, recover=True)
+
+    def test_persistent_empty_json_502_preserves_tracker(self):
+        self._run_sync(metadata_status=502)
+
+    def test_empty_json_422_is_not_retried(self):
+        self._run_sync(metadata_status=422)
+
+    def test_json_error_without_http_status_is_not_retried(self):
+        self._run_sync(fail="json_without_status")
+
+    @unittest.skipUnless(shutil.which("gh"), "GitHub CLI is not installed")
+    def test_real_cli_retries_empty_json_502_from_local_server(self):
+        """Exercise gh's actual JSON decoder, not just a fake CLI exit code."""
+        requests = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                requests.append(json.loads(
+                    self.rfile.read(int(self.headers["Content-Length"]))))
+                status, body = (502, b"") if len(requests) == 1 else (201, b"{}")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        script = (SCRIPTS / "git-autopick").read_text()
+        helper = "post_pr_metadata() {" + script.split(
+            "post_pr_metadata() {", 1)[1].split("\n}\n", 1)[0] + "\n}\n"
+        try:
+            result = subprocess.run(
+                ["bash", "-c", 'msg() { printf "%s\\n" "$*" >&2; }\n' + helper
+                 + 'post_pr_metadata "$1" -f "team_reviewers[]=dev"',
+                 "test", f"http://127.0.0.1:{server.server_port}/requested_reviewers"],
+                capture_output=True, text=True, timeout=20,
+                env={**os.environ, "GH_TOKEN": "local-test-only",
+                     "GITHUB_TOKEN": "local-test-only",
+                     "GH_ENTERPRISE_TOKEN": "local-test-only",
+                     "GITHUB_ENTERPRISE_TOKEN": "local-test-only",
+                     "GH_HOST": "github.com", "GH_DEBUG": "",
+                     "NO_PROXY": "127.0.0.1,localhost"})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("unexpected end of JSON input", result.stderr)
+            self.assertIn("failed with HTTP 502 (attempt 1/3)", result.stderr)
+            self.assertEqual(requests, [{"team_reviewers": ["dev"]}] * 2)
+            self.assertEqual(result.stdout, "")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+
 class TestIgnoredAutomationCommits(AutopickTestBase):
 
     def _bot_author_env(self) -> dict[str, str]:
@@ -234,7 +428,10 @@ class TestIgnoredAutomationCommits(AutopickTestBase):
         fake_gh.parent.mkdir(parents=True, exist_ok=True)
         marker_command = f"touch {marker}\n" if marker else ""
         fake_gh.write_text(f"""#!/bin/bash
-{marker_command}echo "https://github.com/Sonic-DE/test/pull/1"
+{marker_command}case "$1 $2" in
+    "pr create") echo "https://github.com/Sonic-DE/test/pull/1" ;;
+    "api user") echo josephcrowell ;;
+esac
 """)
         fake_gh.chmod(0o755)
         return {
@@ -329,7 +526,10 @@ class TestIgnoredVersionBumpCommits(AutopickTestBase):
         fake_gh.parent.mkdir(parents=True, exist_ok=True)
         marker_command = f"touch {marker}\n" if marker else ""
         fake_gh.write_text(f"""#!/bin/bash
-{marker_command}echo "https://github.com/Sonic-DE/test/pull/1"
+{marker_command}case "$1 $2" in
+    "pr create") echo "https://github.com/Sonic-DE/test/pull/1" ;;
+    "api user") echo josephcrowell ;;
+esac
 """)
         fake_gh.chmod(0o755)
         return {

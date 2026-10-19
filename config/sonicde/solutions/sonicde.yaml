@@ -129,6 +129,8 @@ build:
     - sonicde/sonic-pipewire
     - sonicde/sonic-polkit
     - sonicde/sonic-polkit-agent
+    - sonicde/sonic-power-management
+    - sonicde/sonic-print-management
     - sonicde/sonic-pyside
     - sonicde/sonic-pulseaudio-library
     - sonicde/sonic-qt-accounts-library
@@ -141,6 +143,8 @@ build:
     - sonicde/sonic-silver
     - sonicde/sonic-silver-gtk
     - sonicde/sonic-silver-icons
+    - sonicde/sonic-silver-sdk
+    - sonicde/sonic-silver-sound-theme
     - sonicde/sonic-ssh-password-prompt
     - sonicde/sonic-system-monitor-library
     - sonicde/sonic-system-info

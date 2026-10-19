@@ -166,18 +166,17 @@ Rules:
   prunes `graphify-out/` at any depth and honors `.gitignore` (which
   ignores `src/*/`), so a bare `/graphify .` at the root graphs the
   builder only — never the SonicDE sub-projects.
-- Keep a merged cross-repo graph at `graphify-out/graph.json` by
-  composing every graphified sub-project's `graphify-out/graph.json`
-  with the root `merge-graphs` wrapper. Re-run it after per-project
-  `graphify update .` so the root graph stays current:
-  `./merge-graphs` (globs `src/sonicde/*/graphify-out/graph.json` and
-  `src/3rdparty/*/graphify-out/graph.json`, requires at least two
-  graphs, and prefixes node IDs per repo so same-named symbols across
-  sub-projects do not collide). This is a full rebuild, not incremental.
+- The root `./merge-graphs` wrapper composes the per-project graphs into
+  the merged cross-repo graph at `graphify-out/graph.json`. It globs
+  `src/sonicde/*/graphify-out/graph.json` and
+  `src/3rdparty/*/graphify-out/graph.json`, requires at least two graphs,
+  and prefixes node IDs per repo so same-named symbols across sub-projects
+  do not collide. This is a full rebuild, not incremental.
+  The user runs this command; agents must not run it automatically.
 - For cross-repo or whole-SonicDE questions, run `graphify query
   "<question>"` at the project root against the merged
-  `graphify-out/graph.json` (build it first with `./merge-graphs` if it
-  is missing or stale).
+  `graphify-out/graph.json`. If it is missing or stale, report that to the
+  user rather than running `merge-graphs`.
 
 ## Conventions
 

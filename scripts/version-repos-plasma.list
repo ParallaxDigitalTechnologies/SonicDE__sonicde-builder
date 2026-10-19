@@ -31,6 +31,8 @@ sonic-oxygen-sounds
 sonic-pipewire
 sonic-plasma5-support-library
 sonic-polkit-agent
+sonic-power-management
+sonic-print-management
 sonic-qt-theme-bridge
 sonic-rdp-server
 sonic-screen
@@ -39,6 +41,8 @@ sonic-screenies
 sonic-screenlocker
 sonic-silver
 sonic-silver-gtk
+sonic-silver-sdk
+sonic-silver-sound-theme
 sonic-ssh-password-prompt
 sonic-system-info
 sonic-system-monitor

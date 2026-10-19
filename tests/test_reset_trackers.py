@@ -53,7 +53,7 @@ class TestResetTrackers(unittest.TestCase):
         git(upstream, "add", "synced")
         git(upstream, "commit", "-m", "upstream synced change")
         synced = git(upstream, "rev-parse", "HEAD")
-        git(upstream, "update-ref", "refs/heads/Plasma/6.7", synced)
+        git(upstream, "update-ref", "refs/heads/Plasma/6.8", synced)
         (upstream / "pending").write_text("not imported\n")
         git(upstream, "add", "pending")
         git(upstream, "commit", "-m", "upstream pending change")
@@ -74,11 +74,11 @@ class TestResetTrackers(unittest.TestCase):
         git(repo, "remote", "rename", "origin", "upstream")
         git(repo, "remote", "add", "origin", str(origin))
         git(repo, "fetch", "origin")
-        git(repo, "config", "autopick.tracker", "origin/tracking/plasma-6.7")
+        git(repo, "config", "autopick.tracker", "origin/tracking/plasma-6.8")
         git(repo, "config", "autopick.enabled", "true")
         git(repo, "config", "autopick.master", "origin/master")
-        git(repo, "config", "autopick.upstream", "upstream/Plasma/6.7")
-        git(origin, "update-ref", "refs/heads/tracking/plasma-6.7", base)
+        git(repo, "config", "autopick.upstream", "upstream/Plasma/6.8")
+        git(origin, "update-ref", "refs/heads/tracking/plasma-6.8", base)
         git(origin, "update-ref", "refs/heads/tracking/plasma-6.8", tip)
 
         config = {
@@ -123,11 +123,11 @@ class TestResetTrackers(unittest.TestCase):
         self.assertIn("tracker verified", result.stdout)
         self.assertEqual(git(origin, "rev-parse", "refs/heads/tracking/plasma-6.8"), synced)
         self.assertNotEqual(synced, tip)
-        self.assertEqual(git(origin, "rev-parse", "refs/heads/tracking/plasma-6.7"), base)
+        self.assertEqual(git(origin, "rev-parse", "refs/heads/tracking/plasma-6.8"), base)
         self.assertEqual(git(other_origin, "rev-parse", "refs/heads/tracking/plasma-6.8"), other_tip)
         self.assertEqual(git(repo, "rev-parse", "HEAD"), head)
         self.assertEqual(git(repo, "status", "--porcelain"), status)
-        self.assertEqual(git(repo, "config", "autopick.upstream"), "upstream/Plasma/6.7")
+        self.assertEqual(git(repo, "config", "autopick.upstream"), "upstream/Plasma/6.8")
 
     def test_selective_preview_does_not_change_tracker(self):
         _, origin, _, synced, tip = self.make_repo("sonic-plasma", "plasma")
@@ -141,7 +141,7 @@ class TestResetTrackers(unittest.TestCase):
         _, origin, _, synced, tip = self.make_repo("sonic-plasma", "plasma")
         result = self.run_reset("--yes")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(git(origin, "rev-parse", "refs/heads/tracking/plasma-6.7"), synced)
+        self.assertEqual(git(origin, "rev-parse", "refs/heads/tracking/plasma-6.8"), synced)
         self.assertEqual(git(origin, "rev-parse", "refs/heads/tracking/plasma-6.8"), tip)
 
     def test_missing_6_8_branch_is_reported_without_reset(self):
@@ -188,8 +188,8 @@ class TestResetTrackers(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("using existing checkout configuration", result.stderr)
         self.assertEqual(git(origin, "rev-parse", "refs/heads/tracking/plasma-6.8"), synced)
-        self.assertEqual(git(origin, "rev-parse", "refs/heads/tracking/plasma-6.7"), base)
-        self.assertEqual(git(repo, "config", "autopick.upstream"), "upstream/Plasma/6.7")
+        self.assertEqual(git(origin, "rev-parse", "refs/heads/tracking/plasma-6.8"), base)
+        self.assertEqual(git(repo, "config", "autopick.upstream"), "upstream/Plasma/6.8")
         self.assertFalse((self.packages / "sonic-legacy.yaml").exists())
 
     def test_legacy_repo_without_explicit_branch_is_not_reset(self):
