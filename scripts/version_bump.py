@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Version bump scripts for SonicDE repos.
 
-Reads the explicit Plasma, Frameworks, and System repository lists, updates
+Reads the explicit Core, Frameworks, and System repository lists, updates
 existing release version fields in CMakeLists.txt, commits any change, and
 creates a tag even when no CMake version fields exist. Unlike KDE's release scripts,
 no second "bump to next dev version" commit is created -- we make patch
 releases against these tagged versions (e.g. 6.7.4.1).
 
 Usage:
-    version_bump.py plasma <version> [--dry-run] [--list]
+    version_bump.py core <version> [--dry-run] [--list]
     version_bump.py frameworks <version> [--dry-run] [--list]
     version_bump.py system <version> [--dry-run] [--list]
+    version_bump.py project-dep <version> [--dry-run] [--no-push]
 """
 from __future__ import annotations
 
@@ -34,6 +35,11 @@ SYSTEM_VARS = (
     "RELEASE_SERVICE_VERSION_MAJOR",
     "RELEASE_SERVICE_VERSION_MINOR",
     "RELEASE_SERVICE_VERSION_MICRO",
+)
+
+PROJECT_DEP_SET = re.compile(
+    r'(^[ \t]*(?i:set)\s*\(\s*PROJECT_DEP_VERSION\s+)("?)(\d+(?:\.\d+)+)\2(?=\s|\))',
+    re.MULTILINE,
 )
 
 
@@ -90,6 +96,10 @@ def _replace_system_version(content: str, version: str) -> str:
 
 
 CATEGORIES: dict[str, dict] = {
+    "core": {
+        "replace": _replace_plasma_version,
+    },
+    # Keep the internal Plasma category compatible with tracker tooling.
     "plasma": {
         "replace": _replace_plasma_version,
     },
@@ -121,9 +131,56 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+def _prepare_origin_master(repo: Path) -> None:
+    """Start on attached master at origin/master, without discarding local work."""
+    def run(*args: str) -> str:
+        result = _git(repo, *args)
+        if result.returncode:
+            raise ValueError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
+        return result.stdout.strip()
+
+    if run("status", "--porcelain", "--untracked-files=no"):
+        raise ValueError("working tree is not clean")
+    git_dir = Path(run("rev-parse", "--git-dir"))
+    if not git_dir.is_absolute():
+        git_dir = repo / git_dir
+    if any((git_dir / state).exists() for state in (
+            "rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer")):
+        raise ValueError("a rebase, merge, or cherry-pick is still in progress")
+
+    run("fetch", "--quiet", "--tags", "origin",
+        "+refs/heads/master:refs/remotes/origin/master")
+    remote = run("rev-parse", "--verify", "refs/remotes/origin/master^{commit}")
+    local = _git(repo, "show-ref", "--verify", "--quiet", "refs/heads/master")
+    if local.returncode == 0:
+        ancestor = _git(repo, "merge-base", "--is-ancestor", "refs/heads/master", "refs/remotes/origin/master")
+        if ancestor.returncode:
+            raise ValueError("local master has unpushed/diverged commits or could not be checked; refusing to overwrite it")
+    elif local.returncode != 1:
+        raise ValueError(f"cannot inspect local master: {local.stderr.strip()}")
+
+    current_branch = _git(repo, "symbolic-ref", "--quiet", "HEAD")
+    if current_branch.returncode == 1:
+        detached = _git(repo, "merge-base", "--is-ancestor", "HEAD", "refs/remotes/origin/master")
+        if detached.returncode:
+            raise ValueError("detached HEAD has commits outside origin/master; refusing to abandon them")
+    elif current_branch.returncode != 0:
+        raise ValueError(f"cannot inspect HEAD: {current_branch.stderr.strip()}")
+
+    if local.returncode == 0:
+        run("checkout", "--quiet", "master")
+        run("merge", "--quiet", "--ff-only", "refs/remotes/origin/master")
+    else:
+        run("checkout", "--quiet", "-b", "master", "--track", "origin/master")
+    if run("symbolic-ref", "--quiet", "HEAD") != "refs/heads/master" or run("rev-parse", "HEAD") != remote:
+        raise ValueError("checkout is not attached to master at the fetched origin/master commit")
+    print(f"[{repo.name}] using master at origin/master ({remote[:12]})")
+
+
 def _find_repos(root: Path, category: str) -> list[str]:
     """Read the maintained list; never infer membership from CMake or tags."""
-    roster = root / "scripts" / f"version-repos-{category}.list"
+    roster_category = "plasma" if category == "core" else category
+    roster = root / "scripts" / f"version-repos-{roster_category}.list"
     repos: list[str] = []
     for number, line in enumerate(roster.read_text(encoding="utf-8").splitlines(), 1):
         name = line.split("#", 1)[0].strip()
@@ -154,7 +211,7 @@ def _get_current_version(cmake: Path, category: str) -> str | None:
             return f"{majors[0]}.{minors[0]}.{micros[0]}"
         return None
 
-    var = PLASMA_VAR if category == "plasma" else FRAMEWORKS_VAR
+    var = PLASMA_VAR if category in ("core", "plasma") else FRAMEWORKS_VAR
     matches = re.findall(rf'set\s*\(\s*{re.escape(var)}\s+"([^"]*)"', content)
     return matches[0] if matches else None
 
@@ -162,6 +219,89 @@ def _get_current_version(cmake: Path, category: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Main logic
 # ---------------------------------------------------------------------------
+
+
+def _project_dep_files(repo: Path) -> dict[str, str]:
+    """Read dependency declarations from the current checkout's tracked files."""
+    result = _git(repo, "ls-files", "-z", "--", "CMakeLists.txt", "**/CMakeLists.txt", "*.cmake", "*.cmake.in")
+    if result.returncode:
+        raise ValueError(f"[{repo.name}] cannot list tracked CMake files: {result.stderr.strip()}")
+    files = {}
+    for name in result.stdout.split("\0"):
+        path = repo / name
+        if not name or path.is_symlink() or not path.is_file():
+            continue
+        content = path.read_bytes().decode("utf-8")
+        if PROJECT_DEP_SET.search(content):
+            files[name] = content
+    return files
+
+
+def _source_repositories(root: Path) -> list[Path]:
+    source_root = root / "src" / "sonicde"
+    if not source_root.is_dir():
+        raise ValueError(f"SonicDE source directory missing: {source_root}")
+    return [repo for repo in sorted(source_root.iterdir())
+            if repo.is_dir() and (repo / ".git").exists()]
+
+
+def _project_dep_sources(root: Path) -> list[tuple[Path, dict[str, str]]]:
+    """Discover declarations without changing checkouts (for previews and lists)."""
+    sources = []
+    for repo in _source_repositories(root):
+        files = _project_dep_files(repo)
+        if files:
+            sources.append((repo, files))
+    return sources
+
+
+def bump_project_dependencies(root: Path, version: str, dry_run: bool, push: bool) -> int:
+    """Commit dependency-only bumps everywhere; never create release tags."""
+    processed = failures = 0
+    message = f"Project Dependency {version}"
+    sources = _project_dep_sources(root) if dry_run else ((repo, {}) for repo in _source_repositories(root))
+    for repo, files in sources:
+        if not dry_run:
+            try:
+                _prepare_origin_master(repo)
+                # Discover from master, not from an old checkout or sync branch.
+                files = _project_dep_files(repo)
+            except (OSError, ValueError) as error:
+                print(f"[{repo.name}] cannot prepare origin/master: {error}", file=sys.stderr)
+                failures += 1
+                continue
+        if not files:
+            continue
+        changed = {}
+        for name, content in files.items():
+            replacement = PROJECT_DEP_SET.sub(
+                lambda match: f"{match[1]}{match[2]}{version}{match[2]}", content)
+            if replacement != content:
+                changed[name] = replacement
+        if not changed:
+            print(f"[{repo.name}] PROJECT_DEP_VERSION already at {version}")
+            continue
+        if dry_run:
+            print(f"[{repo.name}] would update {', '.join(changed)}; commit: {message}")
+            continue
+
+        for name, content in changed.items():
+            (repo / name).write_bytes(content.encode("utf-8"))
+        staged = _git(repo, "add", "--", *changed)
+        committed = _git(repo, "commit", "-m", message, "--", *changed) if staged.returncode == 0 else staged
+        if committed.returncode:
+            print(f"[{repo.name}] dependency commit failed: {committed.stderr.strip()}", file=sys.stderr)
+            failures += 1
+            continue
+        processed += 1
+        print(f"[{repo.name}] committed: {message}")
+        if push:
+            result = _git(repo, "push", "origin", "HEAD:refs/heads/master")
+            if result.returncode:
+                print(f"[{repo.name}] push failed: {result.stderr.strip()}", file=sys.stderr)
+                failures += 1
+    print(f"\n[project-dep] {'dry run' if dry_run else f'committed {processed} repo(s)'}; failures: {failures}")
+    return 1 if failures else 0
 
 
 def bump_category(
@@ -192,6 +332,13 @@ def bump_category(
                   file=sys.stderr)
             continue
 
+        if not dry_run:
+            try:
+                _prepare_origin_master(repo_dir)
+            except (OSError, ValueError) as error:
+                print(f"[{repo_name}] cannot prepare origin/master: {error}", file=sys.stderr)
+                continue
+
         tag = version
         existing_tag = _git(repo_dir, "show-ref", "--verify", "--quiet", f"refs/tags/{tag}")
         if existing_tag.returncode == 0:
@@ -213,18 +360,6 @@ def bump_category(
                 print(f"[{repo_name}] would bump {current or 'CMake version'} -> {version}, tag {tag}")
             else:
                 print(f"[{repo_name}] would tag {tag} (no CMake version change)")
-            continue
-
-        # Check for dirty working tree
-        status = _git(repo_dir, "status", "--porcelain", "--untracked-files=no")
-        if status.returncode != 0:
-            print(f"[{repo_name}] cannot check working tree: {status.stderr.strip()}", file=sys.stderr)
-            continue
-        if status.stdout.strip():
-            print(
-                f"[{repo_name}] working tree not clean, skipping",
-                file=sys.stderr,
-            )
             continue
 
         # Commit only an actual CMake update; tag-only repos need no empty commit.
@@ -258,7 +393,8 @@ def bump_category(
 
         # Push commit and tag to origin
         if push:
-            push_result = _git(repo_dir, "push", "origin", "HEAD", tag)
+            push_result = _git(repo_dir, "push", "origin", "HEAD:refs/heads/master",
+                               f"refs/tags/{tag}:refs/tags/{tag}")
             if push_result.returncode != 0:
                 print(
                     f"[{repo_name}] push failed: "
@@ -284,7 +420,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "category",
-        choices=["plasma", "frameworks", "system"],
+        choices=["core", "plasma", "frameworks", "system", "project-dep"],
         help="Version category",
     )
     parser.add_argument("version", nargs="?", help="New version (X.Y.Z)")
@@ -312,6 +448,20 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = Path(args.root) if args.root else Path(__file__).resolve().parent.parent
+
+    if args.category == "project-dep":
+        if args.version and not _validate_version(args.version):
+            parser.error(f"version must be in X.Y.Z format, got {args.version!r}")
+        if not args.version and not args.list:
+            parser.error("version is required unless --list is given")
+        try:
+            if args.list:
+                for repo, _ in _project_dep_sources(root):
+                    print(repo.name)
+                return 0
+            return bump_project_dependencies(root, args.version, args.dry_run, not args.no_push)
+        except (OSError, UnicodeError, ValueError) as error:
+            parser.error(str(error))
 
     try:
         _find_repos(root, args.category)

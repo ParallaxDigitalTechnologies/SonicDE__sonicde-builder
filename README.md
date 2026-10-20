@@ -23,10 +23,11 @@ howto:
 * list OS packages to install: `./install-deps`
 * preview stale Frameworks debug exports: `./cleanup-stale-cmake-debug`
 * merge per-project graphify graphs: `./merge-graphs`
-* bump Plasma version and tag: `./version-bump-plasma 6.7.6`
+* bump Core version and tag: `./version-bump-core 6.8.0`
+* bump Core dependency requirements: `./version-bump-project-dep 6.8.0`
 * bump Frameworks version and tag: `./version-bump-frameworks 6.31.0`
 * bump System version and tag: `./version-bump-system 26.08.1`
-* list repos in a category: `./version-bump-plasma --list`
+* list repos in a release category: `./version-bump-core --list`
 
 `sync-all` invokes `sync REPOSITORY` for each managed checkout and records
 failures in `state/failed-sync-repos.txt`.
@@ -57,7 +58,7 @@ version bumps:
 
 Three scripts release all repositories in three explicitly maintained lists:
 
-* Plasma: `scripts/version-repos-plasma.list`
+* Core: `scripts/version-repos-plasma.list` (the existing release list is retained)
 * Frameworks: `scripts/version-repos-frameworks.list`
 * System: `scripts/version-repos-system.list`
 
@@ -70,10 +71,11 @@ when a repository joins or leaves a release group.
 
 For each listed repository, the script performs these steps in order:
 
-1. Update existing release-version fields in `CMakeLists.txt`, if present.
-2. Commit the CMake change only if the file actually changed.
-3. Create the `<version>` tag (without a `v` prefix), then push the commit
-   and tag to `origin` unless `--no-push` is specified.
+1. Fetch `origin` and check out local `master` at `origin/master`.
+2. Update existing release-version fields in `CMakeLists.txt`, if present.
+3. Commit the CMake change only if the file actually changed.
+4. Create the `<version>` tag (without a `v` prefix), then push the commit
+   to `origin/master` and the tag to `origin` unless `--no-push` is specified.
 
 Repositories without a CMake file or matching release-version fields are
 still tagged. If CMake is already at the requested version but the tag is
@@ -83,26 +85,26 @@ skipped. Unlike KDE's release scripts, no second "bump to next dev version"
 commit is created -- we make patch releases against these tagged versions
 (e.g. `6.7.4.1`).
 
-    ./version-bump-plasma 6.7.6
+    ./version-bump-core 6.8.0
     ./version-bump-frameworks 6.31.0
     ./version-bump-system 26.08.1
 
 The version argument must be in `X.Y.Z` format. Use `--dry-run` to preview
 CMake changes and tags without modifying files, commits, tags, or remotes:
 
-    ./version-bump-plasma 6.7.6 --dry-run
+    ./version-bump-core 6.8.0 --dry-run
 
 Use `--list` to print the maintained list without modifying anything:
 
-    ./version-bump-plasma --list
+    ./version-bump-core --list
     ./version-bump-frameworks --list
     ./version-bump-system --list
 
 The usual CMake edit patterns are `set(PROJECT_VERSION "X.Y.Z")` for
-**Plasma**, `set(KF_VERSION "X.Y.Z")` for **Frameworks**, and the three
+**Core**, `set(KF_VERSION "X.Y.Z")` for **Frameworks**, and the three
 `set(RELEASE_SERVICE_VERSION_MAJOR/MINOR/MICRO "X")` variables for
 **System**. Frameworks also updates `set(KF_DEP_VERSION "X.Y.Z")` and
-literal `find_package(ECM X.Y.Z)` requirements when present. Plasma
+literal `find_package(ECM X.Y.Z)` requirements when present. Core
 supports a literal `project(... VERSION X.Y.Z)` declaration, and
 `sonic-frameworks-cmake-modules` updates its existing `set(VERSION ...)`.
 These are editing rules, not membership tests. Missing fields are not
@@ -112,6 +114,29 @@ Each script requires a clean working tree in every repo it touches.
 Repos with uncommitted tracked changes are skipped with a warning. Listed
 repositories whose checkouts are missing are also reported and skipped;
 they remain in the maintained release list.
+Existing local `master` branches are only fast-forwarded; unpushed/diverged
+commits are never reset away. A missing local `master` is created tracking
+`origin/master`. Active rebases/merges and detached commits outside
+`origin/master` are refused. `--dry-run` and `--list` remain read-only: they
+inspect the current checkouts without fetching or switching branches.
+
+The separate dependency command scans all checked-out SonicDE repositories,
+not just the Core release list. It updates existing literal
+`set(PROJECT_DEP_VERSION ...)` declarations in tracked CMake files, including
+nested files. It does not change `PROJECT_VERSION`, create missing declarations,
+edit build-generated files, or create tags. Each changed repository receives a
+commit named `Project Dependency VERSION`, for example `Project Dependency 6.8.0`.
+It prepares `master` at `origin/master` before discovering declarations, so
+the bump never writes stale contents from a previous branch. Commits are
+pushed to `origin/master` unless `--no-push` is given. The same clean-tree
+and local-commit protections described above apply.
+
+    ./version-bump-project-dep 6.8.0 --dry-run
+    ./version-bump-project-dep 6.8.0 --no-push
+    ./version-bump-project-dep 6.8.0
+
+The dependency command also supports `--list` to list repositories containing
+the variable, including repositories already at the requested version.
 
 build and system installation:
 ------------------------------
