@@ -20,11 +20,33 @@ howto:
 * reset trackers (recovery): `./reset-trackers --yes`
 * check for missing GitHub repos: `./check-new-repos`
 * list OS packages to install: `./install-deps`
+* preview stale Frameworks debug exports: `./cleanup-stale-cmake-debug`
 * merge per-project graphify graphs: `./merge-graphs`
 * bump Plasma version and tag: `./version-bump-plasma 6.7.6`
 * bump Frameworks version and tag: `./version-bump-frameworks 6.31.0`
 * bump System version and tag: `./version-bump-system 26.08.1`
 * list repos in a category: `./version-bump-plasma --list`
+
+stale debug CMake exports:
+--------------------------
+
+Old debug installations can leave `KF6*Targets-debug.cmake` fragments referring
+to libraries that no longer exist. Preview them on the affected build host:
+
+    ./cleanup-stale-cmake-debug
+
+Remove confirmed stale fragments explicitly (elevate only when required):
+
+    sudo ./cleanup-stale-cmake-debug --apply
+
+Use `--prefix /opt/sonicde` or `--prefix state/install-stage/usr` to inspect
+another installation; `--prefix` can be repeated. The default prefix is `/usr`.
+The command does not hard-code a Frameworks version, execute CMake code, or
+remove main config/target files. It removes a debug fragment when any file it
+references is missing, without requiring a release or other replacement export.
+Healthy debug exports are retained. Unsupported or unsafe fragments are
+reported and retained. Run it between builds and
+installations. It is not invoked automatically by `build-all`.
 
 version bumps:
 --------------
