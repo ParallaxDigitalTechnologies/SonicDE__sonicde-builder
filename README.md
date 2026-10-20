@@ -9,7 +9,8 @@ howto:
 ------
 
 * install dependencies: `pip install pyyaml` and a working Qt6 + CMake 3.28+
-* just fetch git repos: `./fetch-all`
+* fetch one Git repository: `./fetch sonic-browser-integration`
+* fetch all active Git repositories: `./fetch-all`
 * full build: `./build-all`
 * create dependency graph: `./generate-depgraph`
 * sync one repository (autopick): `./sync sonic-browser-integration`
@@ -29,6 +30,18 @@ howto:
 
 `sync-all` invokes `sync REPOSITORY` for each managed checkout and records
 failures in `state/failed-sync-repos.txt`.
+
+`fetch REPOSITORY` fetches exactly one configured repository, without its
+dependencies. It accepts an unambiguous basename or a qualified package name
+such as `sonicde/sonic-browser-integration` or `3rdparty/qcoro6`. It loads the
+current manifests, including configured repositories outside the active build.
+`fetch-all` generates the active model once and invokes `fetch` for each selected
+repository, continues after failures, and returns failure if any fetch failed.
+Existing checkouts keep their HEAD, branch, index, and worktree as before.
+
+    ./fetch sonic-browser-integration --dry-run
+    ./fetch-all --dry-run
+    ./fetch-all --only sonicde/sonic-screen
 
 stale debug CMake exports:
 --------------------------

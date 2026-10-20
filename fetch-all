@@ -1,15 +1,51 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-only
-# run-fetch - fetch all active repositories
+# Fetch all active repositories through the single-repository fetch command.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Generate model first
+MODEL="state/model.json"
+SELECTION_ARGS=()
+FETCH_ARGS=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --dry-run) FETCH_ARGS+=(--dry-run); shift ;;
+        --only|-model|--model)
+            [ "$#" -ge 2 ] || { printf 'Missing value for %s\n' "$1" >&2; exit 2; }
+            if [ "$1" = --only ]; then
+                SELECTION_ARGS+=(--only "$2")
+            else
+                MODEL="$2"
+            fi
+            shift 2
+            ;;
+        --only=*) SELECTION_ARGS+=(--only "${1#*=}"); shift ;;
+        -model=*|--model=*) MODEL="${1#*=}"; shift ;;
+        -h|--help)
+            printf 'Usage: %s [--dry-run] [--only PACKAGE] [-model PATH]\n' "$0"
+            exit 0
+            ;;
+        *) printf 'Unknown argument: %s\n' "$1" >&2; exit 2 ;;
+    esac
+done
+
+# Generate once; child fetch commands reuse the same model.
 python3 scripts/config.py -root . \
     -solution config/sonicde/solutions/sonicde.yaml \
-    -out state/model.json \
-    "$@"
+    -out "$MODEL"
 
-# Fetch
-python3 scripts/fetch.py -model state/model.json "$@"
+REPOS="$(python3 scripts/fetch.py -model "$MODEL" --list "${SELECTION_ARGS[@]}")"
+FAILURES=0
+while IFS= read -r repo; do
+    [ -n "$repo" ] || continue
+    if ! "$SCRIPT_DIR/fetch" "$repo" -model "$MODEL" "${FETCH_ARGS[@]}"; then
+        FAILURES=$((FAILURES + 1))
+    fi
+done <<< "$REPOS"
+
+if [ "$FAILURES" -ne 0 ]; then
+    printf '\n%d fetch failure(s)\n' "$FAILURES" >&2
+    exit 1
+fi
+printf 'fetch complete\n'

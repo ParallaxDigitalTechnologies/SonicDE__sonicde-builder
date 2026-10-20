@@ -242,9 +242,20 @@ def validate_existing(pkg_name: str, git_spec: dict,
     return True
 
 
-def fetch_all(model: dict, dry_run: bool = False,
-              only: list[str] | None = None) -> int:
-    """Fetch all active git packages in topological order."""
+def resolve_repository(repository: str, names: list[str]) -> str:
+    """Accept a qualified package name or an unambiguous repository basename."""
+    if repository in names:
+        return repository
+    matches = [name for name in names if name.rsplit("/", 1)[-1] == repository]
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        raise ValueError(f"Ambiguous repository {repository!r}; use one of: {', '.join(sorted(matches))}")
+    raise ValueError(f"No configured Git repository named {repository!r}")
+
+
+def selected_git_packages(model: dict, only: list[str] | None = None) -> list[str]:
+    """Select active Git packages in the same order used by the batch fetcher."""
     topo = model.get("topo_order", [])
     packages = model.get("packages", {})
     git_pkgs = [(name, packages[name]) for name in topo
@@ -253,7 +264,6 @@ def fetch_all(model: dict, dry_run: bool = False,
     if only:
         # filter to requested packages and their transitive prerequisites
         wanted = set()
-        reverse = model.get("reverse", {})
         stack = list(only)
         while stack:
             n = stack.pop()
@@ -265,39 +275,80 @@ def fetch_all(model: dict, dry_run: bool = False,
                 if e["dependent"] == n:
                     stack.append(e["prerequisite"])
         git_pkgs = [(n, p) for n, p in git_pkgs if n in wanted]
+    return [name for name, _ in git_pkgs]
 
-    errors = 0
-    for pkg_name, pkg in git_pkgs:
-        git_spec = pkg["git"]
-        dest = checkout_path(model, pkg_name)
-        try:
-            if not dest.exists() or not is_git_repo(dest):
-                fetch_missing(pkg_name, git_spec, dest, dry_run)
-            else:
-                if not validate_existing(pkg_name, git_spec, dest):
-                    errors += 1
-                    continue
-                fetch_existing(pkg_name, git_spec, dest, dry_run)
-        except Exception as e:
-            print(f"[{pkg_name}] FAILED: {e}", file=sys.stderr)
-            errors += 1
-    return errors
+
+def fetch_repository(model: dict, pkg_name: str, dry_run: bool = False) -> int:
+    """Fetch exactly one repository; all clone/update handling lives here."""
+    git_spec = model["packages"][pkg_name]["git"]
+    dest = checkout_path(model, pkg_name)
+    try:
+        if not dest.exists() or not is_git_repo(dest):
+            fetch_missing(pkg_name, git_spec, dest, dry_run)
+        else:
+            if not validate_existing(pkg_name, git_spec, dest):
+                return 1
+            fetch_existing(pkg_name, git_spec, dest, dry_run)
+    except Exception as e:
+        print(f"[{pkg_name}] FAILED: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def fetch_all(model: dict, dry_run: bool = False,
+              only: list[str] | None = None) -> int:
+    """Fetch all selected repositories through the shared single-repo handler."""
+    return sum(fetch_repository(model, name, dry_run)
+               for name in selected_git_packages(model, only))
 
 
 def main(argv: list[str]) -> int:
     import argparse
     ap = argparse.ArgumentParser(description="Fetch SonicDE repositories")
-    ap.add_argument("-model", default="state/model.json")
+    ap.add_argument("repository", nargs="?", help="fetch exactly one configured repository, without its prerequisites")
+    ap.add_argument("-model", "--model", default=None)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--list", action="store_true", help="list selected active Git packages without fetching")
     ap.add_argument("--only", action="append", default=[],
                     help="fetch only these packages and their prerequisites")
     args = ap.parse_args(argv)
 
-    with open(args.model) as f:
-        model = json.load(f)
+    if args.repository is not None and not args.repository.strip():
+        ap.error("repository name must not be empty")
+    if args.repository and (args.only or args.list):
+        ap.error("a single repository cannot be combined with --only or --list")
+
+    try:
+        if args.repository and args.model is None:
+            # Load current manifests without changing the active solution or
+            # regenerating a model for every package in a batch fetch.
+            from config import ConfigError, Project
+            root = Path(__file__).resolve().parent.parent
+            project = Project(root, root / "config/sonicde/solutions/sonicde.yaml")
+            try:
+                project.load()
+                args.repository = resolve_repository(
+                    args.repository, [name for name, pkg in project.packages.items() if pkg.git])
+                project.solution["build"] = [args.repository]
+                model = project.to_model(project.build_closure())
+            except ConfigError as error:
+                ap.error(str(error))
+        else:
+            with open(args.model or "state/model.json") as f:
+                model = json.load(f)
+        if args.repository:
+            args.repository = resolve_repository(
+                args.repository, [name for name, pkg in model["packages"].items() if pkg.get("git")])
+    except (OSError, ValueError) as error:
+        ap.error(str(error))
 
     only = args.only or None
-    errs = fetch_all(model, dry_run=args.dry_run, only=only)
+    if args.list:
+        for name in selected_git_packages(model, only):
+            print(name)
+        return 0
+    errs = (fetch_repository(model, args.repository, args.dry_run) if args.repository
+            else fetch_all(model, dry_run=args.dry_run, only=only))
     if errs:
         print(f"\n{errs} fetch failures", file=sys.stderr)
         return 1
