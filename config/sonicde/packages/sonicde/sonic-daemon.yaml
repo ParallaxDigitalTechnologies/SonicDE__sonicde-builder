@@ -26,3 +26,8 @@ buildsystem: cmake
 
 depends:
   - sonicde/sonic-frameworks-cmake-modules
+  - sonicde/sonic-frameworks-app-info
+  - sonicde/sonic-frameworks-core-addons
+  - sonicde/sonic-frameworks-crash-handler
+  - sonicde/sonic-frameworks-dbus
+  - sonicde/sonic-frameworks-settings
