@@ -24,7 +24,7 @@ PLASMA_67_REPOSITORIES = {
 
 NEW_PLASMA_REPOSITORIES = {
     **PLASMA_67_REPOSITORIES,
-    "sonic-silver-sdk": "plasma-sdk",
+    "sonic-theme-sdk": "plasma-sdk",
 }
 
 

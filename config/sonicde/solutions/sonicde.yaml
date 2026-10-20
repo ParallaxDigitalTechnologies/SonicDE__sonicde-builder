@@ -143,7 +143,7 @@ build:
     - sonicde/sonic-silver
     - sonicde/sonic-silver-gtk
     - sonicde/sonic-silver-icons
-    - sonicde/sonic-silver-sdk
+    - sonicde/sonic-theme-sdk
     - sonicde/sonic-silver-sound-theme
     - sonicde/sonic-ssh-password-prompt
     - sonicde/sonic-system-monitor-library
