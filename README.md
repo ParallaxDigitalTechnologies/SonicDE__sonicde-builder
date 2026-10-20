@@ -14,7 +14,8 @@ howto:
 * just fetch git repos: `./fetch-all`
 * full build: `./build-all`
 * create dependency graph: `./generate-depgraph`
-* run upstream sync (autopick): `./sync`
+* sync one repository (autopick): `./sync sonic-browser-integration`
+* sync all managed repositories: `./sync-all`
 * reset repos after merged PRs: `./sync-success-cleanup`
 * cleanup failed autopick runs: `./sync-fail-cleanup --force`
 * reset trackers (recovery): `./reset-trackers --yes`
@@ -26,6 +27,9 @@ howto:
 * bump Frameworks version and tag: `./version-bump-frameworks 6.31.0`
 * bump System version and tag: `./version-bump-system 26.08.1`
 * list repos in a category: `./version-bump-plasma --list`
+
+`sync-all` invokes `sync REPOSITORY` for each managed checkout and records
+failures in `state/failed-sync-repos.txt`.
 
 stale debug CMake exports:
 --------------------------

@@ -12,7 +12,8 @@ sonicde-builder-wip/
 ├── AGENTS.md
 ├── README.md
 ├── CMakeLists.txt                     # top-level superbuild (Qt6 probe + include)
-├── sync                              # run upstream sync (autopick) for all repos
+├── sync                              # run upstream sync (autopick) for one repo argument
+├── sync-all                          # run upstream sync (autopick) for all repos
 ├── sync-fail-cleanup                 # destructive recovery (--force required)
 ├── sync-success-cleanup              # reset repos to origin/master after PRs merge
 ├── sync-tags                         # mirror upstream release tags onto SonicDE commits
@@ -112,7 +113,8 @@ module invoked by the root command scripts:
 ## Autopick
 
 `scripts/git-autopick` synchronizes forked repositories with their
-upstream sources. It is run per-repository by `sync`.
+upstream sources. It is run for one named repository by `sync` and for all
+managed repositories by `sync-all`.
 
 Key invariants:
 
@@ -188,6 +190,6 @@ Rules:
 - The `repo-list` file is a generated compatibility artifact, not
   authoritative. Repository views derive from the normalized model.
 - Root command names:
-  `sync`, `sync-fail-cleanup`, `sync-success-cleanup`, `sync-tags`,
+  `sync`, `sync-all`, `sync-fail-cleanup`, `sync-success-cleanup`, `sync-tags`,
   `build-all`, `check-new-repos`, `fetch-all`, `generate-depgraph`,
   `install-deps`, `merge-graphs`, `reset-trackers`.

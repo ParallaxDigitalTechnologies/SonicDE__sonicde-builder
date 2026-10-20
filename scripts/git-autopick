@@ -153,6 +153,17 @@ update_tracker() {
     git push -q "$AUTOPICK_TRACKER_REMOTE" "+${CURRENT_UPSTREAM}:refs/heads/${AUTOPICK_TRACKER_BRANCH}"
 }
 
+checkout_master_branch() {
+    # Attach HEAD to the local branch; never reset or discard local commits.
+    if git show-ref --verify --quiet "refs/heads/$AUTOPICK_MASTER_BRANCH"; then
+        git checkout -q "$AUTOPICK_MASTER_BRANCH"
+        git merge --quiet --ff-only "$AUTOPICK_MASTER" \
+            || die "cannot fast-forward $AUTOPICK_MASTER_BRANCH to $AUTOPICK_MASTER; local commits preserved"
+    else
+        git checkout -q -b "$AUTOPICK_MASTER_BRANCH" "$AUTOPICK_MASTER"
+    fi
+}
+
 if [ "$CURRENT_UPSTREAM" == "$CURRENT_TRACKER" ]; then
     # Check if the tracker commit's changes are actually in master
     # Use git log --cherry-mark to compare commits between tracker and master
@@ -161,6 +172,7 @@ if [ "$CURRENT_UPSTREAM" == "$CURRENT_TRACKER" ]; then
         "$AUTOPICK_MASTER"..."$CURRENT_TRACKER" 2>/dev/null | grep '^\* ' | wc -l)
     if [ "$unapplied" -eq 0 ]; then
         msg "already synced"
+        checkout_master_branch
         exit 0
     fi
 fi
@@ -172,6 +184,7 @@ master_pid=$(git diff "$CURRENT_MASTER^..$CURRENT_MASTER" | git patch-id --stabl
 upstream_pid=$(git diff "$CURRENT_UPSTREAM^..$CURRENT_UPSTREAM" | git patch-id --stable 2>/dev/null | cut -d' ' -f1)
 if [ -n "$master_pid" ] && [ "$master_pid" = "$upstream_pid" ]; then
     msg "already synced (master and upstream tips have the same changes)"
+    checkout_master_branch
     update_tracker
     exit 0
 fi
@@ -389,8 +402,8 @@ do_rebase
 CURRENT_WORK=`git rev-parse HEAD 2>/dev/null` || die "cant get get current HEAD SHA"
 if [ "$CURRENT_WORK" == "$CURRENT_MASTER" ]; then
     msg ">>> no new changes after rebase"
-    msg ">>> switching back to $AUTOPICK_MASTER and deleting $TEMP_BRANCH"
-    git checkout -q "$AUTOPICK_MASTER"
+    msg ">>> switching back to local branch $AUTOPICK_MASTER_BRANCH and deleting $TEMP_BRANCH"
+    checkout_master_branch
     git branch -q -D "$TEMP_BRANCH"
     update_tracker
     exit 0
