@@ -19,7 +19,8 @@ sonicde-builder-wip/
 ├── sync-tags                         # mirror upstream release tags onto SonicDE commits
 ├── build-all                          # full build: config -> validate -> generate -> cmake
 ├── check-new-repos                    # compare GitHub org listing against managed repos
-├── fetch-all                          # fetch all active repositories
+├── fetch                              # fetch one repository argument
+├── fetch-all                          # fetch all active repositories through fetch
 ├── generate-depgraph                 # generate DOT dependency graph
 ├── install-deps                       # list OS packages needed by active system deps
 ├── merge-graphs                       # merge per-project graphify graphs into root graph
@@ -77,7 +78,7 @@ persists across sessions and may only be changed by an explicit user edit to
    do not commit generated artifacts (`src/*/`, `build/`, `state/`,
    `cmake/`, `repo-list`, `depgraph.*`, `graphify-out/`).
 2. Every immediate child of `src/3rdparty/` and `src/sonicde/` is a
-   separate independent Git repository fetched by `fetch-all`. Run Git
+   separate independent Git repository fetched by `fetch` or `fetch-all`. Run Git
    commands inside the specific project repository being changed, not
    from the project root.
 3. The `config/sonicde/` tree is the imported build configuration. It is
@@ -89,6 +90,27 @@ persists across sessions and may only be changed by an explicit user edit to
 5. When a change crosses package boundaries, inspect every affected
    repository and verify dependency, API, and build-system alignment
    using `generate-depgraph` and `state/model.json`.
+
+## Builder-Owned Dependency Chain
+
+The builder builds the **entire SonicDE dependency chain, including all
+Frameworks packages**. Do not treat SonicDE Frameworks as system-provided KDE
+dependencies or assume a distribution's installed KF6 packages are acceptable
+substitutes for the builder's own packages.
+
+Every required SonicDE package must be represented in the consuming package's
+manifest, so its build and staged installation finish before the consumer is
+configured. Verify requirements against SonicDE's actual CMake sources and map
+the CMake package names to the corresponding SonicDE repository names.
+
+If CMake selects a system KF6 config instead of the staged SonicDE provider,
+investigate missing dependency edges, build/install ordering, staged discovery,
+and source/version alignment. Fix the verified cause in the builder or its
+manifests; do not use installing distribution Frameworks packages as a substitute
+for correcting the builder-owned chain.
+
+Qt6 and dependencies explicitly declared under `os-installed/` remain supplied
+by the operating system. They are distinct from builder-owned SonicDE packages.
 
 ## Adding or Renaming SonicDE Packages
 
@@ -217,5 +239,5 @@ Rules:
   authoritative. Repository views derive from the normalized model.
 - Root command names:
   `sync`, `sync-all`, `sync-fail-cleanup`, `sync-success-cleanup`, `sync-tags`,
-  `build-all`, `check-new-repos`, `fetch-all`, `generate-depgraph`,
+   `build-all`, `check-new-repos`, `fetch`, `fetch-all`, `generate-depgraph`,
   `install-deps`, `merge-graphs`, `reset-trackers`.
