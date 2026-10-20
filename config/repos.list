@@ -112,6 +112,8 @@ sonic-partition-manager
 sonic-pipewire
 sonic-polkit
 sonic-polkit-agent
+sonic-power-management
+sonic-print-management
 sonic-pulseaudio-library
 sonic-qt-accounts-library
 sonic-qt-theme-bridge
@@ -124,6 +126,7 @@ sonic-screenlocker
 sonic-silver
 sonic-silver-gtk
 sonic-silver-icons
+sonic-silver-sound-theme
 sonic-ssh-password-prompt
 sonic-system-monitor-library
 sonic-system-info
@@ -133,6 +136,7 @@ sonic-system-settings
 sonic-system-stats
 sonic-terminal
 sonic-terminal-tools
+sonic-theme-sdk
 sonic-thunderbolt
 sonic-tv-interface
 sonic-vault
