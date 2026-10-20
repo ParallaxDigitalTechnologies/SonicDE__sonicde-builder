@@ -26,6 +26,7 @@ sonicde-builder-wip/
 ├── reset-trackers                     # reset autopick trackers (recovery, --yes required)
 ├── repo-list                          # generated compatibility artifact
 ├── config/
+│   ├── repos.list                     # maintained SonicDE repository inventory
 │   └── sonicde/
 │       ├── solutions/sonicde.yaml     # active solution (build list, prefix, env, fetch)
 │       └── packages/                  # package manifests (sonicde, 3rdparty, os-installed, qt6)
@@ -88,6 +89,31 @@ persists across sessions and may only be changed by an explicit user edit to
 5. When a change crosses package boundaries, inspect every affected
    repository and verify dependency, API, and build-system alignment
    using `generate-depgraph` and `state/model.json`.
+
+## Adding or Renaming SonicDE Packages
+
+When adding a SonicDE repository/package, update **all applicable maintained
+lists in the same change**, not just its package manifest:
+
+1. **`config/repos.list`** — add the repository basename, e.g.
+   `sonic-power-management`.
+2. **`config/sonicde/solutions/sonicde.yaml`** — add the package to `build`,
+   using its full name, e.g. `sonicde/sonic-power-management`.
+3. **The matching release list**, when the package belongs to a release group:
+   - Core: `scripts/version-repos-plasma.list` (the legacy filename is retained).
+   - Frameworks: `scripts/version-repos-frameworks.list`.
+   - System: `scripts/version-repos-system.list`.
+
+Also add its manifest under `config/sonicde/packages/sonicde/`. Use the current
+canonical repository name consistently. For renames, replace the old name in
+every affected list and rename/update the manifest; do not leave stale entries
+or add duplicates.
+
+The root **`repo-list` is generated**, not a substitute for either maintained
+list under `config/`. Regenerating it alone does not register a new package.
+Before reporting the work complete, explicitly verify membership in both
+`config/repos.list` and `config/sonicde/solutions/sonicde.yaml`, plus the
+applicable release list.
 
 ## Build Pipeline
 
