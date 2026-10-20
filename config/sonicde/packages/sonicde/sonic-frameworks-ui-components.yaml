@@ -28,5 +28,11 @@ build-depends:
     - sonicde/sonic-frameworks-cmake-modules
 
 depends:
-    - sonicde/sonic-frameworks-xml-gui
+    - sonicde/sonic-frameworks-app-info
+    - sonicde/sonic-frameworks-core-addons
+    - sonicde/sonic-frameworks-internationalization
     - sonicde/sonic-frameworks-io
+    - sonicde/sonic-frameworks-progress-ui
+    - sonicde/sonic-frameworks-settings
+    - sonicde/sonic-frameworks-widgets-addons
+    - sonicde/sonic-frameworks-xml-gui

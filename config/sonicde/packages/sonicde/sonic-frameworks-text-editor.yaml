@@ -28,6 +28,13 @@ build-depends:
     - sonicde/sonic-frameworks-cmake-modules
 
 depends:
+    - sonicde/sonic-frameworks-archive
     - sonicde/sonic-frameworks-auth
+    - sonicde/sonic-frameworks-color-scheme
+    - sonicde/sonic-frameworks-gui-addons
+    - sonicde/sonic-frameworks-internationalization
+    - sonicde/sonic-frameworks-io
+    - sonicde/sonic-frameworks-settings
     - sonicde/sonic-frameworks-spell-check
     - sonicde/sonic-frameworks-syntax-highlighting
+    - sonicde/sonic-frameworks-ui-components
