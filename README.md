@@ -5,8 +5,6 @@ This is a standalone builder for [SonicDE](https://github.com/Sonic-DE/)
 (fork of KDE with full X11 compatibility) with a Python + CMake
 superbuild pipeline.
 
-Warning: it's still an early work-in-progress.
-
 howto:
 ------
 
