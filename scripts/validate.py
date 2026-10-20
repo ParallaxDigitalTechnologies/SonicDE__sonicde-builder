@@ -78,7 +78,7 @@ def _probe_cmake_package(package_spec: str) -> bool:
             "cmake_minimum_required(VERSION 3.28)\n"
             "project(SonicDECMakeProbe LANGUAGES CXX)\n"
             "include(CMakeFindDependencyMacro)\n"
-            f"find_package({package_spec} CONFIG REQUIRED)\n")
+            f"find_package({package_spec} REQUIRED)\n")
         result = subprocess.run(["cmake", "-S", str(root), "-B", str(root / "build")],
                                 capture_output=True, text=True)
     return result.returncode == 0
