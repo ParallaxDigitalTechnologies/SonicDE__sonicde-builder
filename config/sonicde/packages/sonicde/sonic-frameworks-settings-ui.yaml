@@ -29,5 +29,9 @@ build-depends:
 
 depends:
     - sonicde/sonic-frameworks-color-scheme
+    - sonicde/sonic-frameworks-core-addons
     - sonicde/sonic-frameworks-gui-addons
+    - sonicde/sonic-frameworks-internationalization
+    - sonicde/sonic-frameworks-settings
     - sonicde/sonic-frameworks-text-codec
+    - sonicde/sonic-frameworks-widgets-addons
