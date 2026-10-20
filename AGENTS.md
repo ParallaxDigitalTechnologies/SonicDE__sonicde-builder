@@ -114,6 +114,13 @@ by the operating system. They are distinct from builder-owned SonicDE packages.
 
 ## Adding or Renaming SonicDE Packages
 
+Release version edits and tagging are separate: `version-bump-core`,
+`version-bump-frameworks`, and `version-bump-system` only update/commit CMake
+versions and push `master`. `version-bump-tag-core`,
+`version-bump-tag-frameworks`, and `version-bump-tag-system` only tag the accepted
+`origin/master` commit and push that specific tag. Never push all branches or
+all tags. `version-bump-project-dep` remains dependency-only and never tags.
+
 When adding a SonicDE repository/package, update **all applicable maintained
 lists in the same change**, not just its package manifest:
 

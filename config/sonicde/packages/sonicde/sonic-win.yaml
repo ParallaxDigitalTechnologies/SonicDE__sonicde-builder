@@ -7,11 +7,16 @@ sources:
                 url: ${sonicde_git}/${@basename}.git
                 depth: ${sonic_depth}
                 fetch: ${@SOLUTION::fetch::origin}
+            upstream:
+                url: https://invent.kde.org/plasma/kwin.git
+                depth: ${upstream_depth}
+                fetch: ${@SOLUTION::fetch::upstream}
         config:
             autopick.enabled: 'false'
             autopick.master: origin/${master_branch}
             advice.detachedHead: 'false'
             remote.origin.tagOpt: --no-tags
+            remote.upstream.tagOpt: --no-tags
         local-branch: ${master_branch}
 
 master_branch: master

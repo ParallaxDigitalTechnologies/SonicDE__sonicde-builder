@@ -102,6 +102,15 @@ def update_missing_submodules(pkg_name: str, dest: Path) -> None:
             update_missing_submodules(pkg_name, dest / relative)
 
 
+def tag_fetch_option(remote: dict) -> str:
+    """Do not add a second tag mapping when manifests already specify one."""
+    if any(refspec.lstrip("+").startswith("refs/tags/")
+           for refspec in (remote.get("fetch") or [])):
+        # --no-tags disables implicit tag fetching, not explicit tag refspecs.
+        return "--no-tags"
+    return "--tags"
+
+
 def fetch_missing(pkg_name: str, git_spec: dict, dest: Path,
                   dry_run: bool = False) -> None:
     """Initialize and fetch a new checkout."""
@@ -138,10 +147,7 @@ def fetch_missing(pkg_name: str, git_spec: dict, dest: Path,
     # fetch each remote
     for rname, rdata in (git_spec.get("remotes") or {}).items():
         depth = rdata.get("depth", 0)
-        # Fetch tags explicitly so a manifest's tagOpt (commonly --no-tags to
-        # avoid implicit tag following) cannot prevent fetch-all from updating
-        # the repository's tags.
-        fetch_args = ["fetch", "--tags"]
+        fetch_args = ["fetch", tag_fetch_option(rdata)]
         if rname == "upstream":
             # Upstream history may be rewritten. Keep its remote-tracking refs
             # synchronized even when the update is not a fast-forward.
@@ -200,7 +206,7 @@ def fetch_existing(pkg_name: str, git_spec: dict, dest: Path,
     # fetch/prune declared remotes
     for rname, rdata in (git_spec.get("remotes") or {}).items():
         depth = rdata.get("depth", 0)
-        fetch_args = ["fetch", "--prune", "--tags"]
+        fetch_args = ["fetch", "--prune", tag_fetch_option(rdata)]
         if rname == "upstream":
             fetch_args.append("--force")
         if depth:

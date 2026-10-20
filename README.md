@@ -22,10 +22,13 @@ howto:
 * list OS packages to install: `./install-deps`
 * preview stale Frameworks debug exports: `./cleanup-stale-cmake-debug`
 * merge per-project graphify graphs: `./merge-graphs`
-* bump Core version and tag: `./version-bump-core 6.8.0`
+* bump Core CMake version: `./version-bump-core 6.8.0`
+* tag accepted Core releases: `./version-bump-tag-core 6.8.0`
 * bump Core dependency requirements: `./version-bump-project-dep 6.8.0`
-* bump Frameworks version and tag: `./version-bump-frameworks 6.31.0`
-* bump System version and tag: `./version-bump-system 26.08.1`
+* bump Frameworks CMake version: `./version-bump-frameworks 6.31.0`
+* tag accepted Frameworks releases: `./version-bump-tag-frameworks 6.31.0`
+* bump System CMake version: `./version-bump-system 26.08.1`
+* tag accepted System releases: `./version-bump-tag-system 26.08.1`
 * list repos in a release category: `./version-bump-core --list`
 
 `sync-all` invokes `sync REPOSITORY` for each managed checkout and records
@@ -38,6 +41,10 @@ current manifests, including configured repositories outside the active build.
 `fetch-all` generates the active model once and invokes `fetch` for each selected
 repository, continues after failures, and returns failure if any fetch failed.
 Existing checkouts keep their HEAD, branch, index, and worktree as before.
+Explicit tag refspecs are respected without adding a second `--tags` mapping.
+For example, `refs/tags/*:refs/tags/origin/*` fetches tags into the `origin/`
+namespace only, avoiding collisions if the remote itself has namespaced tags.
+Remotes without explicit tag mappings still fetch tags using `--tags`.
 
     ./fetch sonic-browser-integration --dry-run
     ./fetch-all --dry-run
@@ -67,7 +74,8 @@ installations. It is not invoked automatically by `build-all`.
 version bumps:
 --------------
 
-Three scripts release all repositories in three explicitly maintained lists:
+CMake bumps and release tagging are separate operations. Both use the same
+three explicitly maintained repository lists:
 
 * Core: `scripts/version-repos-plasma.list` (the existing release list is retained)
 * Frameworks: `scripts/version-repos-frameworks.list`
@@ -80,28 +88,25 @@ The scripts read these lists as-is; they do not discover repositories by
 searching CMake files or tags at release time. Maintain the lists explicitly
 when a repository joins or leaves a release group.
 
-For each listed repository, the script performs these steps in order:
+For each listed repository, the regular `version-bump-core`,
+`version-bump-frameworks`, and `version-bump-system` commands:
 
 1. Fetch `origin` and check out local `master` at `origin/master`.
 2. Update existing release-version fields in `CMakeLists.txt`, if present.
 3. Commit the CMake change only if the file actually changed.
-4. Create the `<version>` tag (without a `v` prefix), then push the commit
-   to `origin/master` and the tag to `origin` unless `--no-push` is specified.
+4. Push only the updated `master` to `origin/master` unless `--no-push` is specified.
 
-Repositories without a CMake file or matching release-version fields are
-still tagged. If CMake is already at the requested version but the tag is
-missing, the script creates the tag without an empty commit. Existing tags
-are never overwritten; repositories already carrying the requested tag are
-skipped. Unlike KDE's release scripts, no second "bump to next dev version"
-commit is created -- we make patch releases against these tagged versions
-(e.g. `6.7.4.1`).
+These commands never create or push tags. Existing tags do not prevent CMake
+updates. Repositories without matching version fields, or already at the
+requested version, need no commit and are left unchanged. Unlike KDE's release
+scripts, no second "bump to next dev version" commit is created.
 
     ./version-bump-core 6.8.0
     ./version-bump-frameworks 6.31.0
     ./version-bump-system 26.08.1
 
 The version argument must be in `X.Y.Z` format. Use `--dry-run` to preview
-CMake changes and tags without modifying files, commits, tags, or remotes:
+CMake changes without modifying files, commits, tags, or remotes:
 
     ./version-bump-core 6.8.0 --dry-run
 
@@ -110,6 +115,23 @@ Use `--list` to print the maintained list without modifying anything:
     ./version-bump-core --list
     ./version-bump-frameworks --list
     ./version-bump-system --list
+
+After the version commits have been accepted on `origin/master`, tag separately:
+
+    ./version-bump-tag-core 6.8.0 --dry-run
+    ./version-bump-tag-core 6.8.0
+    ./version-bump-tag-frameworks 6.31.0
+    ./version-bump-tag-system 26.08.1
+
+The `version-bump-tag-*` commands fetch and prepare `origin/master` using the
+same branch protections as the regular commands. They never edit CMake files
+or create commits. They verify that any existing release-version fields at the
+accepted tip match the requested version, then tag that exact commit and push
+only that tag. Listed repositories without release-version fields can still be
+tagged. An existing local tag is reused only if it already points to that same
+commit; conflicting local or remote tags are errors and are never force-moved.
+`--no-push`, `--dry-run`, and `--list` are also supported. Tag previews inspect
+the locally fetched `origin/master` ref without fetching or switching branches.
 
 The usual CMake edit patterns are `set(PROJECT_VERSION "X.Y.Z")` for
 **Core**, `set(KF_VERSION "X.Y.Z")` for **Frameworks**, and the three

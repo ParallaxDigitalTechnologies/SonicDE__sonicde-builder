@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-only
-# version-bump-system - Bump version for all System (Gear) repos and create tags.
+# version-bump-system - Update and commit System CMake versions, without tagging.
 #
 # System repos use set(RELEASE_SERVICE_VERSION_MAJOR/MINOR/MICRO "X") in
 # CMakeLists.txt.  The new version is passed as the first argument (X.Y.Z

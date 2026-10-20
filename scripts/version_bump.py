@@ -2,8 +2,8 @@
 """Version bump scripts for SonicDE repos.
 
 Reads the explicit Core, Frameworks, and System repository lists, updates
-existing release version fields in CMakeLists.txt, commits any change, and
-creates a tag even when no CMake version fields exist. Unlike KDE's release scripts,
+existing release version fields in CMakeLists.txt and commits any change.
+Tag creation is a separate --tag-only operation. Unlike KDE's release scripts,
 no second "bump to next dev version" commit is created -- we make patch
 releases against these tagged versions (e.g. 6.7.4.1).
 
@@ -12,6 +12,7 @@ Usage:
     version_bump.py frameworks <version> [--dry-run] [--list]
     version_bump.py system <version> [--dry-run] [--list]
     version_bump.py project-dep <version> [--dry-run] [--no-push]
+    version_bump.py core <version> --tag-only [--dry-run] [--no-push]
 """
 from __future__ import annotations
 
@@ -148,7 +149,7 @@ def _prepare_origin_master(repo: Path) -> None:
             "rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer")):
         raise ValueError("a rebase, merge, or cherry-pick is still in progress")
 
-    run("fetch", "--quiet", "--tags", "origin",
+    run("fetch", "--quiet", "--no-tags", "origin",
         "+refs/heads/master:refs/remotes/origin/master")
     remote = run("rev-parse", "--verify", "refs/remotes/origin/master^{commit}")
     local = _git(repo, "show-ref", "--verify", "--quiet", "refs/heads/master")
@@ -296,7 +297,7 @@ def bump_project_dependencies(root: Path, version: str, dry_run: bool, push: boo
         processed += 1
         print(f"[{repo.name}] committed: {message}")
         if push:
-            result = _git(repo, "push", "origin", "HEAD:refs/heads/master")
+            result = _git(repo, "push", "--no-follow-tags", "origin", "HEAD:refs/heads/master")
             if result.returncode:
                 print(f"[{repo.name}] push failed: {result.stderr.strip()}", file=sys.stderr)
                 failures += 1
@@ -321,7 +322,7 @@ def bump_category(
         print(f"[{category}] no matching repos found", file=sys.stderr)
         return 0
 
-    processed = 0
+    processed = failures = 0
     for repo_name in repos:
         repo_dir = root / "src" / "sonicde" / repo_name
         cmake = repo_dir / "CMakeLists.txt"
@@ -330,6 +331,7 @@ def bump_category(
         if not (repo_dir / ".git").exists():
             print(f"[{repo_name}] repository checkout missing, skipping",
                   file=sys.stderr)
+            failures += 1
             continue
 
         if not dry_run:
@@ -337,16 +339,8 @@ def bump_category(
                 _prepare_origin_master(repo_dir)
             except (OSError, ValueError) as error:
                 print(f"[{repo_name}] cannot prepare origin/master: {error}", file=sys.stderr)
+                failures += 1
                 continue
-
-        tag = version
-        existing_tag = _git(repo_dir, "show-ref", "--verify", "--quiet", f"refs/tags/{tag}")
-        if existing_tag.returncode == 0:
-            print(f"[{repo_name}] tag {tag} already exists, skipping")
-            continue
-        if existing_tag.returncode != 1:
-            print(f"[{repo_name}] cannot check tag {tag}: {existing_tag.stderr.strip()}", file=sys.stderr)
-            continue
 
         current = _get_current_version(cmake, category) if cmake.exists() else None
         content = cmake.read_text(encoding="utf-8") if cmake.exists() else ""
@@ -357,55 +351,105 @@ def bump_category(
 
         if dry_run:
             if cmake_changed:
-                print(f"[{repo_name}] would bump {current or 'CMake version'} -> {version}, tag {tag}")
+                print(f"[{repo_name}] would bump {current or 'CMake version'} -> {version} and commit (no tag)")
             else:
-                print(f"[{repo_name}] would tag {tag} (no CMake version change)")
+                print(f"[{repo_name}] no CMake version change; no commit or tag")
             continue
 
-        # Commit only an actual CMake update; tag-only repos need no empty commit.
+        # Version updates never inspect, create, or push release tags.
         if cmake_changed:
             cmake.write_text(new_content, encoding="utf-8")
             add_result = _git(repo_dir, "add", "CMakeLists.txt")
             if add_result.returncode != 0:
                 print(f"[{repo_name}] staging failed: {add_result.stderr.strip()}", file=sys.stderr)
+                failures += 1
                 continue
             commit_result = _git(repo_dir, "commit", "-m", f"Release {version}")
             if commit_result.returncode != 0:
                 print(f"[{repo_name}] commit failed: {commit_result.stderr}", file=sys.stderr)
+                failures += 1
                 continue
-
-        # Create tag (don't overwrite if it exists)
-        tag_result = _git(repo_dir, "tag", tag)
-        if tag_result.returncode != 0:
-            print(
-                f"[{repo_name}] tag {tag} already exists or failed: "
-                f"{tag_result.stderr.strip()}",
-                file=sys.stderr,
-            )
-            continue
+            print(f"[{repo_name}] bumped {current or 'CMake version'} -> {version}")
         else:
-            if cmake_changed:
-                print(f"[{repo_name}] bumped {current or 'CMake version'} -> {version}, tagged {tag}")
-            elif current == version:
-                print(f"[{repo_name}] CMake already at {version}, tagged {tag}")
-            else:
-                print(f"[{repo_name}] tagged {tag} (no CMake version change)")
+            print(f"[{repo_name}] no CMake version change; no commit or tag")
 
-        # Push commit and tag to origin
-        if push:
-            push_result = _git(repo_dir, "push", "origin", "HEAD:refs/heads/master",
-                               f"refs/tags/{tag}:refs/tags/{tag}")
+        if push and cmake_changed:
+            push_result = _git(repo_dir, "push", "--no-follow-tags", "origin", "HEAD:refs/heads/master")
             if push_result.returncode != 0:
                 print(
                     f"[{repo_name}] push failed: "
                     f"{push_result.stderr.strip()}",
                     file=sys.stderr,
                 )
+                failures += 1
             else:
-                print(f"[{repo_name}] pushed {tag} to origin")
+                print(f"[{repo_name}] pushed master to origin (no tags)")
 
         processed += 1
 
+    if failures:
+        raise RuntimeError(f"[{category}] {failures} repository operation(s) failed; processed {processed}")
+    return processed
+
+
+def tag_category(root: Path, category: str, version: str,
+                 dry_run: bool = False, push: bool = True) -> int:
+    """Tag only the accepted origin/master commit; never edit or commit files."""
+    processed = failures = 0
+    for name in _find_repos(root, category):
+        repo = root / "src" / "sonicde" / name
+        try:
+            if not (repo / ".git").exists():
+                raise ValueError("repository checkout missing")
+            if not dry_run:
+                _prepare_origin_master(repo)
+
+            target = _git(repo, "rev-parse", "--verify", "refs/remotes/origin/master^{commit}")
+            if target.returncode:
+                raise ValueError(f"cannot resolve origin/master: {target.stderr.strip()}")
+            sha = target.stdout.strip()
+            # Read the accepted source, not the branch that happens to be checked out.
+            source = _git(repo, "ls-tree", "--name-only", sha, "--", "CMakeLists.txt")
+            if source.returncode:
+                raise ValueError(f"cannot inspect origin/master: {source.stderr.strip()}")
+            if source.stdout.strip():
+                content = _git(repo, "show", f"{sha}:CMakeLists.txt")
+                if content.returncode:
+                    raise ValueError(f"cannot read accepted CMake file: {content.stderr.strip()}")
+                updated = CATEGORIES[category]["replace"](content.stdout, version)
+                if category == "frameworks" and name == "sonic-frameworks-cmake-modules":
+                    updated = _replace_quoted_set(updated, "VERSION", version)
+                if updated != content.stdout:
+                    raise ValueError(f"origin/master CMake version is not {version}; run the regular version-bump command first")
+
+            tag_ref = f"refs/tags/{version}"
+            existing = _git(repo, "show-ref", "--verify", "--quiet", tag_ref)
+            if existing.returncode == 0:
+                peeled = _git(repo, "rev-parse", "--verify", f"{tag_ref}^{{commit}}")
+                if peeled.returncode or peeled.stdout.strip() != sha:
+                    raise ValueError(f"tag {version} already points elsewhere; refusing to move it")
+            elif existing.returncode != 1:
+                raise ValueError(f"cannot inspect tag {version}: {existing.stderr.strip()}")
+
+            if dry_run:
+                action = "reuse" if existing.returncode == 0 else "create"
+                print(f"[{name}] would {action} tag {version} at origin/master {sha[:12]} (no CMake edits)")
+                continue
+            if existing.returncode == 1:
+                created = _git(repo, "tag", version, sha)
+                if created.returncode:
+                    raise ValueError(f"cannot create tag: {created.stderr.strip()}")
+            if push:
+                result = _git(repo, "push", "--no-follow-tags", "origin", f"{tag_ref}:{tag_ref}")
+                if result.returncode:
+                    raise ValueError(f"tag push failed: {result.stderr.strip()}")
+            print(f"[{name}] tagged {version} at origin/master {sha[:12]}")
+            processed += 1
+        except (OSError, ValueError) as error:
+            print(f"[{name}] {error}", file=sys.stderr)
+            failures += 1
+    if failures:
+        raise RuntimeError(f"[{category} tags] {failures} repository operation(s) failed; processed {processed}")
     return processed
 
 
@@ -432,8 +476,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-push",
         action="store_true",
-        help="Do not push commits and tags to origin (push is the default)",
+        help="Do not push this operation's commits or tags to origin (push is the default)",
     )
+    parser.add_argument("--tag-only", action="store_true",
+                        help="only tag accepted origin/master; do not update CMake or create commits")
     parser.add_argument(
         "--list",
         action="store_true",
@@ -450,6 +496,8 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root) if args.root else Path(__file__).resolve().parent.parent
 
     if args.category == "project-dep":
+        if args.tag_only:
+            parser.error("project-dep updates do not create release tags")
         if args.version and not _validate_version(args.version):
             parser.error(f"version must be in X.Y.Z format, got {args.version!r}")
         if not args.version and not args.list:
@@ -480,10 +528,13 @@ def main(argv: list[str] | None = None) -> int:
     if not _validate_version(args.version):
         parser.error(f"version must be in X.Y.Z format, got {args.version!r}")
 
-    n = bump_category(
-        root, args.category, args.version,
-        dry_run=args.dry_run, push=not args.no_push,
-    )
+    operation = tag_category if args.tag_only else bump_category
+    try:
+        n = operation(root, args.category, args.version,
+                      dry_run=args.dry_run, push=not args.no_push)
+    except (OSError, ValueError, RuntimeError) as error:
+        print(str(error), file=sys.stderr)
+        return 1
     print(f"\n[{args.category}] processed {n} repo(s)")
     return 0
 
