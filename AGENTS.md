@@ -121,6 +121,18 @@ versions and push `master`. `version-bump-tag-core`,
 `origin/master` commit and push that specific tag. Never push all branches or
 all tags. `version-bump-project-dep` remains dependency-only and never tags.
 
+### SonicDE and Upstream Release Tags
+
+SonicDE release tags are **unprefixed**, for example `6.8.0`. Tags beginning
+with **`v`**, such as `v6.8.0`, are KDE upstream tags, not SonicDE releases.
+When auditing SonicDE package versions or selecting the latest SonicDE release,
+compare against unprefixed release tags; do not strip `v` and treat upstream
+tags as equivalent SonicDE releases. The two tags may legitimately point to
+different commits; that alone is not a tag inconsistency. Do not move or delete
+either tag merely because their version numbers match.
+
+### Required Package Lists
+
 When adding a SonicDE repository/package, update **all applicable maintained
 lists in the same change**, not just its package manifest:
 
