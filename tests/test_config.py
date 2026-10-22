@@ -24,6 +24,7 @@ PLASMA_67_REPOSITORIES = {
 
 NEW_PLASMA_REPOSITORIES = {
     **PLASMA_67_REPOSITORIES,
+    "sonic-keyboard": "plasma-keyboard",
     "sonic-theme-sdk": "plasma-sdk",
 }
 
@@ -54,6 +55,50 @@ class TestPublicRepositoryUrls(unittest.TestCase):
         project.load()
         package = project.packages["sonicde/sonic-frameworks-ui-components"]
         self.assertIn("sonicde/sonic-frameworks-io", package.depends)
+
+
+class TestKeyboardPackage(unittest.TestCase):
+    def test_keyboard_registration_and_dependencies(self):
+        root = Path(__file__).resolve().parent.parent
+        project = Project(root, root / "config/sonicde/solutions/sonicde.yaml")
+        project.load()
+        closure = project.build_closure()
+        model = project.to_model(closure)
+        key = "sonicde/sonic-keyboard"
+        package = project.packages[key]
+        self.assertEqual(project.solution["build"].count(key), 1)
+        for path in ("config/repos.list", "scripts/version-repos-plasma.list"):
+            with self.subTest(path=path):
+                self.assertEqual((root / path).read_text().splitlines().count("sonic-keyboard"), 1)
+        self.assertEqual(package.buildsystem, "cmake")
+        git = model["packages"][key]["git"]
+        self.assertEqual(git["ref"], "origin/master")
+        self.assertEqual(git["local_branch"], "master")
+        self.assertEqual(git["remotes"]["origin"]["url"], "https://github.com/Sonic-DE/sonic-keyboard.git")
+        self.assertEqual(git["remotes"]["upstream"]["url"], "https://invent.kde.org/plasma/plasma-keyboard.git")
+        self.assertEqual(git["config"]["autopick.upstream"], "upstream/Plasma/6.8")
+        self.assertEqual(git["config"]["autopick.tracker"], "origin/tracking/plasma-6.8")
+        expected = {
+            "sonicde/sonic-frameworks-cmake-modules",
+            "sonicde/sonic-frameworks-core-addons",
+            "sonicde/sonic-frameworks-crash-handler",
+            "sonicde/sonic-frameworks-internationalization",
+            "sonicde/sonic-frameworks-quick-ui",
+            "sonicde/sonic-frameworks-settings",
+            "sonicde/sonic-frameworks-settings-ui",
+            "sonicde/sonic-interface-libraries",
+            "os-installed/libxkbcommon",
+        }
+        self.assertEqual(set(package.depends) | set(package.build_depends), expected)
+        self.assertTrue(expected.issubset(closure.packages))
+        self.assertFalse(any("wayland" in dependency.lower() for dependency in package.depends + package.build_depends))
+        for view in (active_git, managed_sonicde, autopick_repos, post_autopick_repos):
+            self.assertIn(key, view(model), view.__name__)
+        self.assertEqual(generate_repo_list(model).count("sonic-keyboard"), 1)
+        self.assertEqual(org_repo_names(model).count("sonic-keyboard"), 1)
+        dependency = model["packages"]["os-installed/libxkbcommon"]
+        self.assertEqual(dependency["type"], "system")
+        self.assertEqual(dependency["pkg_config"], ["xkbcommon"])
 
 
 class TestPlasmaSyncBranches(unittest.TestCase):

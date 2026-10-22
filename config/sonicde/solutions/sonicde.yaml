@@ -117,6 +117,7 @@ build:
     - sonicde/sonic-gtk-theme-bridge
     - sonicde/sonic-interface-libraries
     - sonicde/sonic-keybind-daemon
+    - sonicde/sonic-keyboard
     - sonicde/sonic-l10n-templates
     - sonicde/sonic-launcher-menu-edit
     - sonicde/sonic-login-manager

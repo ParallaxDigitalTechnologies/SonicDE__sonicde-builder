@@ -26,8 +26,12 @@ buildsystem: cmake
 
 build-depends:
     - sonicde/sonic-frameworks-cmake-modules
+    - sonicde/sonic-frameworks-internationalization
     - os-installed/perl
     - os-installed/docbook-xsl
     - os-installed/xsltproc
     - sys/docbook-xml
     - sys/libxslt
+
+depends:
+    - sonicde/sonic-frameworks-archive

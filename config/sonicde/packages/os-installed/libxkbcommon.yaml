@@ -1,0 +1,7 @@
+provides: sys/libxkbcommon
+type: system
+pkg-config: xkbcommon
+platform-packages:
+    debian: libxkbcommon-dev
+    devuan: libxkbcommon-dev
+    arch: libxkbcommon

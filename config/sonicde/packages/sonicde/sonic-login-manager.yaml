@@ -27,14 +27,17 @@ buildsystem: cmake
 build-depends:
     - sonicde/sonic-frameworks-cmake-modules
     - os-installed/libx11
+    - os-installed/zlib
 
 depends:
     - sonicde/sonic-silver
+    - sonicde/sonic-silver-icons
     - sonicde/sonic-frameworks-archive
     - sonicde/sonic-frameworks-auth
     - sonicde/sonic-frameworks-core-addons
     - sonicde/sonic-frameworks-dbus
     - sonicde/sonic-frameworks-internationalization
+    - sonicde/sonic-frameworks-icon-themes
     - sonicde/sonic-frameworks-io
     - sonicde/sonic-frameworks-package
     - sonicde/sonic-frameworks-qml-bridge
@@ -44,4 +47,5 @@ depends:
     - sonicde/sonic-frameworks-svg
     - sonicde/sonic-frameworks-windowsystem
     - sonicde/sonic-interface-libraries
+    - sonicde/sonic-qt-theme-bridge
     - sonicde/sonic-workspace

@@ -99,6 +99,7 @@ sonic-gamma
 sonic-gtk-theme-bridge
 sonic-interface-libraries
 sonic-keybind-daemon
+sonic-keyboard
 sonic-l10n-templates
 sonic-launcher-menu-edit
 sonic-login-manager

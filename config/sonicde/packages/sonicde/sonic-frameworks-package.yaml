@@ -29,5 +29,6 @@ build-depends:
 
 depends:
     - sonicde/sonic-frameworks-archive
+    - sonicde/sonic-frameworks-core-addons
     - sonicde/sonic-frameworks-doctools
     - sonicde/sonic-frameworks-internationalization
