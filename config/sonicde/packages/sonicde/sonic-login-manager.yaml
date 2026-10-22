@@ -47,5 +47,6 @@ depends:
     - sonicde/sonic-frameworks-svg
     - sonicde/sonic-frameworks-windowsystem
     - sonicde/sonic-interface-libraries
+    - sonicde/sonic-keyboard
     - sonicde/sonic-qt-theme-bridge
     - sonicde/sonic-workspace

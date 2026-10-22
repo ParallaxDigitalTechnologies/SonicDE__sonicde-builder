@@ -45,4 +45,5 @@ depends:
     - sonicde/sonic-frameworks-windowsystem
     - sonicde/sonic-frameworks-xml-gui
     - sonicde/sonic-interface-libraries
+    - sonicde/sonic-keyboard
     - sonicde/sonic-screen-library

@@ -58,6 +58,17 @@ class TestPublicRepositoryUrls(unittest.TestCase):
 
 
 class TestKeyboardPackage(unittest.TestCase):
+    def test_keyboard_is_ordered_before_its_consumers(self):
+        root = Path(__file__).resolve().parent.parent
+        project = Project(root, root / "config/sonicde/solutions/sonicde.yaml")
+        project.load()
+        closure = project.build_closure()
+        provider = "sonicde/sonic-keyboard"
+        for consumer in ("sonicde/sonic-workspace", "sonicde/sonic-login-manager", "sonicde/sonic-screenlocker"):
+            with self.subTest(consumer=consumer):
+                self.assertIn(provider, project.packages[consumer].depends)
+                self.assertLess(closure.topo_order.index(provider), closure.topo_order.index(consumer))
+
     def test_keyboard_registration_and_dependencies(self):
         root = Path(__file__).resolve().parent.parent
         project = Project(root, root / "config/sonicde/solutions/sonicde.yaml")

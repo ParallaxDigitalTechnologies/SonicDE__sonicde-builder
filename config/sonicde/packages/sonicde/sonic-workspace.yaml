@@ -37,6 +37,7 @@ depends:
     - sonicde/sonic-frameworks-text-widgets
     - sonicde/sonic-frameworks-ui-components
     - sonicde/sonic-interface-libraries
+    - sonicde/sonic-keyboard
     - sonicde/sonic-polkit
     - sonicde/sonic-screen
     - sonicde/sonic-screenlocker
