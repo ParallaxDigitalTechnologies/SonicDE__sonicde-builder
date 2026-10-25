@@ -35,6 +35,7 @@ depends:
     - sonicde/sonic-frameworks-archive
     - sonicde/sonic-frameworks-auth
     - sonicde/sonic-frameworks-core-addons
+    - sonicde/sonic-frameworks-color-scheme
     - sonicde/sonic-frameworks-dbus
     - sonicde/sonic-frameworks-internationalization
     - sonicde/sonic-frameworks-icon-themes
