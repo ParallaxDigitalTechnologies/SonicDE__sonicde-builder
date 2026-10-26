@@ -42,7 +42,6 @@ sonic-screenies
 sonic-screenlocker
 sonic-silver
 sonic-silver-gtk
-sonic-theme-sdk
 sonic-silver-sound-theme
 sonic-ssh-password-prompt
 sonic-system-info
@@ -51,6 +50,7 @@ sonic-system-monitor-library
 sonic-system-settings
 sonic-system-stats
 sonic-terminal-tools
+sonic-theme-sdk
 sonic-thunderbolt
 sonic-tv-interface
 sonic-vault
