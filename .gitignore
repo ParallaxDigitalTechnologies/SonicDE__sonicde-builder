@@ -24,3 +24,4 @@ depgraph.svg
 .ccls-cache
 .pytest-cache
 __pycache__/
+.claude
