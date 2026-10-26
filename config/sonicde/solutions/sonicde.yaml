@@ -17,7 +17,6 @@ kdelibs_git: https://invent.kde.org/libraries/
 kdenet_git: https://invent.kde.org/network/
 
 plasma_git: https://invent.kde.org/plasma/
-plasma_version: v6.7.0
 
 # clone depth of our and upstream packages (those we forked)
 sonic_depth: 0
@@ -193,7 +192,6 @@ package-defaults:
     kdelibs_force: true
     plasma_git: ${plasma_git}
     plasma_force: true
-    plasma_version: ${plasma_version}
     ossqm_git: ${ossqm_git}
     sonic_depth: ${sonic_depth}
     upstream_depth: ${upstream_depth}
