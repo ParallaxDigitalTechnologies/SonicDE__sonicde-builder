@@ -704,6 +704,8 @@ def main(argv: list[str]) -> int:
     ap.add_argument("-solution-define", action="append", default=[])
     ap.add_argument("-project-define", action="append", default=[])
     ap.add_argument("-out", default="state/model.json")
+    ap.add_argument("-build", action="append", default=[], metavar="REPOSITORY",
+                    help="replace the solution build list with this repository (repeatable)")
     ap.add_argument("--closure-only", action="store_true")
     args = ap.parse_args(argv)
 
@@ -718,6 +720,27 @@ def main(argv: list[str]) -> int:
 
     prj = Project(args.root, args.solution, sdef, pdef)
     prj.load()
+    if args.build:
+        # Accept the same repository names as ./fetch.
+        from fetch import resolve_repository
+        buildable = [name for name, pkg in prj.packages.items()
+                     if pkg.ptype != "system" and pkg.buildsystem in ("", "cmake")]
+        try:
+            targets = [resolve_repository(name, buildable) for name in args.build]
+        except ValueError as error:
+            ap.error(str(error))
+        # Packages in the full solution that depend on a target, directly or
+        # transitively, must be rebuilt against it. The closure then adds the
+        # prerequisites of the targets and of those dependents.
+        full = prj.build_closure()
+        dependents: set[str] = set()
+        frontier = set(targets)
+        while frontier:
+            frontier = {e.dependent for e in full.edges
+                        if e.prerequisite in frontier and e.dependent not in dependents}
+            dependents |= frontier
+        prj.solution["build"] = targets + sorted(dependents - set(targets))
+        print(f"build targets: {', '.join(targets)} (+{len(dependents - set(targets))} dependents)")
     cl = prj.build_closure()
 
     print(f"closure: {len(cl.packages)} packages, {len(cl.edges)} edges")

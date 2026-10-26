@@ -215,6 +215,28 @@ skips system/no-build packages, and stops on the first deployment error.
 Deployment is not transactional: an install failure can leave earlier packages
 installed, although no packages are deployed while the meta-build is incomplete.
 
+Build one repository instead of the whole solution:
+
+    ./build-repo sonic-firewall --parallel 8
+    ./build-repo sonic-firewall --install --parallel 8
+
+`build-repo` takes a repository name (or qualified package name, as `./fetch`
+does) and builds that repository, every package that depends on it directly or
+transitively (so they are rebuilt against it), and the prerequisites of all of
+those. A leaf such as `sonic-firewall` builds only itself and its
+prerequisites; a low-level framework rebuilds much of the desktop. It accepts
+the same options as `build-all`, and `--install` deploys exactly the selected
+packages with the same full-build barrier. The selection is written to
+`state/build-model.json` and `state/build-depgraph.dot`, leaving the full
+solution's `state/model.json` untouched. To retry deployment after a successful
+`build-repo --install` build:
+
+    sudo -v
+    sudo -- python3 scripts/install.py -model state/build-model.json
+
+Both commands regenerate the shared superbuild in `build/` for their selection,
+so run `build-all` again before relying on a full-solution build tree.
+
 architecture:
 -------------
 

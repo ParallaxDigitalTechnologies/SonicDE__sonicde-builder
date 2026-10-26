@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-only
+# build-repo - build one repository, its prerequisites and every package that
+# depends on it, optionally followed by system installation of that set
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
+
+INSTALL=false
+INSTALL_PREFIX=/usr
+PREFIX_SET=false
+CONFIG_ARGS=()
+BUILD_ARGS=()
+JOBS="${SONICDE_BUILD_JOBS:-}"
+# Kept apart from state/model.json and depgraph.dot, which describe the full
+# solution and are read by the sync, fetch and graph commands.
+MODEL=state/build-model.json
+DOT=state/build-depgraph.dot
+
+usage() {
+    cat <<'EOF'
+Usage: ./build-repo REPOSITORY [--install] [--install-prefix PATH] [build options]
+Example: ./build-repo sonic-firewall
+
+Builds REPOSITORY, the packages it depends on, and every package that depends
+on it (directly or transitively), so dependents are rebuilt against it.
+
+  --install               Install that set to the system only after it all builds.
+  --install-prefix PATH   System prefix (default /usr); requires --install.
+  --parallel N, -j N      Maximum concurrent compiler jobs inside one package.
+  --verbose, -v          Verbose build output.
+  --clean-first          Clean before building.
+  -solution-define K=V    Configuration override.
+  -project-define K=V     Project override.
+  -h, --help             Show this help without building.
+
+REPOSITORY is a repository name (sonic-firewall) or a qualified package name
+(sonicde/sonic-firewall), as accepted by ./fetch.
+With --install, dependency installs are staged privately in state/install-stage.
+No live system install is attempted until every selected package builds.
+After a successful --install build, sudo authenticates before system deployment.
+Only deployment is elevated; configuration and compilation run as the invoking user.
+EOF
+}
+
+if [[ $# -eq 0 ]]; then
+    usage >&2
+    exit 2
+fi
+case "$1" in
+    -h|--help) usage; exit 0 ;;
+    ""|-*) echo "The first argument must be a repository name (use --help)" >&2; exit 2 ;;
+esac
+REPOSITORY="$1"
+shift
+if [[ ! "$REPOSITORY" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]; then
+    echo "Invalid repository name: $REPOSITORY" >&2
+    exit 2
+fi
+
+while (($#)); do
+    case "$1" in
+        --install) INSTALL=true; shift ;;
+        --install-prefix)
+            [[ $# -ge 2 && -n "$2" && "$2" != -* ]] || { echo "--install-prefix requires a path" >&2; exit 2; }
+            INSTALL_PREFIX="$2"; PREFIX_SET=true; shift 2 ;;
+        --parallel|-j)
+            [[ $# -ge 2 && "$2" =~ ^[1-9][0-9]*$ ]] || { echo "$1 requires a positive job count" >&2; exit 2; }
+            JOBS="$2"; shift 2 ;;
+        --verbose|-v|--clean-first) BUILD_ARGS+=("$1"); shift ;;
+        -solution-define|-project-define)
+            [[ $# -ge 2 && "$2" == *=* ]] || { echo "$1 requires K=V" >&2; exit 2; }
+            CONFIG_ARGS+=("$1" "$2"); shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unsupported option: $1 (use --help)" >&2; exit 2 ;;
+    esac
+done
+if [[ -n "$JOBS" && ! "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "SONICDE_BUILD_JOBS/--parallel must be a positive job count" >&2
+    exit 2
+fi
+if [[ -z "$JOBS" ]]; then
+    JOBS="$(python3 scripts/default_jobs.py)"
+fi
+if [[ "$PREFIX_SET" == true && "$INSTALL" != true ]]; then
+    echo "--install-prefix requires --install" >&2
+    exit 2
+fi
+GENERATE_ARGS=(--jobs "$JOBS" --dot-out "$DOT")
+if [[ "$INSTALL" == true ]]; then
+    [[ "$INSTALL_PREFIX" == /* && "$INSTALL_PREFIX" != *';'* && "$INSTALL_PREFIX" != *$'\n'* ]] || {
+        echo "--install-prefix must be an absolute path without semicolons or newlines" >&2; exit 2;
+    }
+    # Configure for the FINAL prefix, not a prefix override at deployment time:
+    # compiled-in paths must refer to the system destination, not the staging tree.
+    CONFIG_ARGS+=(-solution-define "install-prefix=$INSTALL_PREFIX")
+    GENERATE_ARGS+=(--staging-root "$SCRIPT_DIR/state/install-stage")
+fi
+
+# Generate a model holding only the repository, its dependents and their prerequisites
+python3 scripts/config.py -root . \
+    -solution config/sonicde/solutions/sonicde.yaml \
+    -out "$MODEL" \
+    -build "$REPOSITORY" \
+    "${CONFIG_ARGS[@]}"
+
+# Check every selected source before launching any configuration/build jobs.
+python3 scripts/check_sources.py -model "$MODEL"
+
+# Validate system dependencies of the selected packages
+python3 scripts/validate.py -model "$MODEL"
+
+# Generate CMake superbuild for the selected packages
+echo "Package build parallelism: $JOBS job(s); meta-build package scheduling: serial"
+python3 scripts/generate.py -model "$MODEL" "${GENERATE_ARGS[@]}"
+
+# Configure parent (includes Qt6 Core probe)
+cmake -B build -S . -G Ninja
+
+# Build the selected packages
+cmake --build build --parallel 1 "${BUILD_ARGS[@]}"
+
+# set -e above is the deployment barrier: a failed configure/build never reaches
+# this phase. Do not move this into a per-package ExternalProject step.
+if [[ "$INSTALL" == true ]]; then
+    echo "Build of $REPOSITORY and related packages succeeded. Authenticating for system installation..."
+    sudo -v
+    sudo -- python3 "$SCRIPT_DIR/scripts/install.py" -model "$SCRIPT_DIR/$MODEL"
+fi

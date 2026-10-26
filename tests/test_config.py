@@ -420,6 +420,53 @@ class TestConfigParsing(unittest.TestCase):
         self.assertEqual(model["schema_version"], 1)
         self.assertIn("sonicde/foo", model["packages"])
 
+    def _make_build_graph(self) -> Path:
+        """base <- lib <- app (+extra), lib <- tool <- ui; other is unrelated."""
+        pdir = self.root / "pkgs"
+        self._make_pkg(pdir, "sonicde/base", buildsystem="cmake")
+        self._make_pkg(pdir, "sonicde/lib", buildsystem="cmake", depends=["sonicde/base"])
+        self._make_pkg(pdir, "sonicde/extra", buildsystem="cmake")
+        self._make_pkg(pdir, "sonicde/app", buildsystem="cmake", depends=["sonicde/lib", "sonicde/extra"])
+        self._make_pkg(pdir, "sonicde/tool", buildsystem="cmake", depends=["sonicde/lib"])
+        self._make_pkg(pdir, "sonicde/ui", buildsystem="cmake", depends=["sonicde/tool"])
+        self._make_pkg(pdir, "sonicde/other", buildsystem="cmake", depends=["sonicde/base"])
+        self._make_pkg(pdir, "os-installed/syslib", type="system")
+        return self._make_solution(pdir, build=["sonicde/app", "sonicde/ui", "sonicde/other"])
+
+    def test_build_selects_dependents_and_their_prerequisites(self):
+        from config import main as config_main
+        sol = self._make_build_graph()
+        out = self.root / "build-model.json"
+        self.assertEqual(config_main(["-root", str(self.root), "-solution", str(sol),
+                                      "-out", str(out), "-build", "lib"]), 0)
+        model = json.loads(out.read_text())
+        self.assertEqual(set(model["packages"]),
+                         {"sonicde/base", "sonicde/lib", "sonicde/extra",
+                          "sonicde/app", "sonicde/tool", "sonicde/ui"})
+        order = model["topo_order"]
+        self.assertLess(order.index("sonicde/lib"), order.index("sonicde/tool"))
+        self.assertLess(order.index("sonicde/tool"), order.index("sonicde/ui"))
+
+    def test_build_leaf_selects_only_its_prerequisites(self):
+        from config import main as config_main
+        sol = self._make_build_graph()
+        out = self.root / "build-model.json"
+        self.assertEqual(config_main(["-root", str(self.root), "-solution", str(sol),
+                                      "-out", str(out), "-build", "sonicde/other"]), 0)
+        self.assertEqual(set(json.loads(out.read_text())["packages"]),
+                         {"sonicde/base", "sonicde/other"})
+
+    def test_build_rejects_unknown_and_system_packages(self):
+        from config import main as config_main
+        sol = self._make_build_graph()
+        out = self.root / "build-model.json"
+        for name in ("missing", "syslib"):
+            with self.subTest(name=name), self.assertRaises(SystemExit) as raised:
+                config_main(["-root", str(self.root), "-solution", str(sol),
+                             "-out", str(out), "-build", name])
+            self.assertEqual(raised.exception.code, 2)
+        self.assertFalse(out.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

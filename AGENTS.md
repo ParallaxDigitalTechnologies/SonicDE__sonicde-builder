@@ -18,6 +18,7 @@ sonicde-builder-wip/
 ├── sync-success-cleanup              # reset repos to origin/master after PRs merge
 ├── sync-tags                         # mirror upstream release tags onto SonicDE commits
 ├── build-all                          # full build: config -> validate -> generate -> cmake
+├── build-repo                         # one repository + its dependents + their prerequisites
 ├── check-new-repos                    # compare GitHub org listing against managed repos
 ├── fetch                              # fetch one repository argument
 ├── fetch-all                          # fetch all active repositories through fetch
@@ -258,5 +259,5 @@ Rules:
   authoritative. Repository views derive from the normalized model.
 - Root command names:
   `sync`, `sync-all`, `sync-fail-cleanup`, `sync-success-cleanup`, `sync-tags`,
-   `build-all`, `check-new-repos`, `fetch`, `fetch-all`, `generate-depgraph`,
+   `build-all`, `build-repo`, `check-new-repos`, `fetch`, `fetch-all`, `generate-depgraph`,
   `install-deps`, `merge-graphs`, `reset-trackers`.
