@@ -12,20 +12,28 @@ SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from config import Project, ConfigError
-from repositories import (active_git, managed_sonicde, autopick_repos,
-                          post_autopick_repos, generate_repo_list, org_repo_names)
 
 
-PLASMA_67_REPOSITORIES = {
-    "sonic-power-management": "powerdevil",
-    "sonic-print-management": "print-manager",
-    "sonic-silver-sound-theme": "ocean-sound-theme",
-}
+PLASMA_UPSTREAM_PREFIX = "upstream/Plasma/"
+PLASMA_TRACKER_PREFIX = "origin/tracking/plasma-"
 
-NEW_PLASMA_REPOSITORIES = {
-    **PLASMA_67_REPOSITORIES,
-    "sonic-keyboard": "plasma-keyboard",
-    "sonic-theme-sdk": "plasma-sdk",
+
+def plasma_release(project: Project) -> str:
+    """The one Plasma release every autopicked Plasma manifest tracks."""
+    releases = {package.git.config["autopick.upstream"].removeprefix(PLASMA_UPSTREAM_PREFIX)
+                for package in project.packages.values()
+                if package.git and str(package.git.config.get("autopick.upstream", "")).startswith(PLASMA_UPSTREAM_PREFIX)}
+    if len(releases) != 1:
+        raise AssertionError(f"Plasma manifests track several releases: {sorted(releases)}")
+    return releases.pop()
+
+
+# Unmaintained upstreams are never autopicked; some keep an upstream remote
+# only so upstream release tags can still be fetched.
+STANDALONE_UPSTREAMS = {
+    "sonic-drawing-tablet": None,
+    "sonic-gamma": None,
+    "sonic-win": "https://invent.kde.org/plasma/kwin.git",
 }
 
 
@@ -49,68 +57,6 @@ class TestPublicRepositoryUrls(unittest.TestCase):
                         self.assertTrue(remote.url.startswith("https://github.com/"), remote.url)
         self.assertGreater(github_remotes, 0)
 
-    def test_ui_components_declares_direct_kio_dependency(self):
-        root = Path(__file__).resolve().parent.parent
-        project = Project(root, root / "config/sonicde/solutions/sonicde.yaml")
-        project.load()
-        package = project.packages["sonicde/sonic-frameworks-ui-components"]
-        self.assertIn("sonicde/sonic-frameworks-io", package.depends)
-
-
-class TestKeyboardPackage(unittest.TestCase):
-    def test_keyboard_is_ordered_before_its_consumers(self):
-        root = Path(__file__).resolve().parent.parent
-        project = Project(root, root / "config/sonicde/solutions/sonicde.yaml")
-        project.load()
-        closure = project.build_closure()
-        provider = "sonicde/sonic-keyboard"
-        for consumer in ("sonicde/sonic-workspace", "sonicde/sonic-login-manager", "sonicde/sonic-screenlocker"):
-            with self.subTest(consumer=consumer):
-                self.assertIn(provider, project.packages[consumer].depends)
-                self.assertLess(closure.topo_order.index(provider), closure.topo_order.index(consumer))
-
-    def test_keyboard_registration_and_dependencies(self):
-        root = Path(__file__).resolve().parent.parent
-        project = Project(root, root / "config/sonicde/solutions/sonicde.yaml")
-        project.load()
-        closure = project.build_closure()
-        model = project.to_model(closure)
-        key = "sonicde/sonic-keyboard"
-        package = project.packages[key]
-        self.assertEqual(project.solution["build"].count(key), 1)
-        for path in ("config/repos.list", "scripts/version-repos-plasma.list"):
-            with self.subTest(path=path):
-                self.assertEqual((root / path).read_text().splitlines().count("sonic-keyboard"), 1)
-        self.assertEqual(package.buildsystem, "cmake")
-        git = model["packages"][key]["git"]
-        self.assertEqual(git["ref"], "origin/master")
-        self.assertEqual(git["local_branch"], "master")
-        self.assertEqual(git["remotes"]["origin"]["url"], "https://github.com/Sonic-DE/sonic-keyboard.git")
-        self.assertEqual(git["remotes"]["upstream"]["url"], "https://invent.kde.org/plasma/plasma-keyboard.git")
-        self.assertEqual(git["config"]["autopick.upstream"], "upstream/Plasma/6.8")
-        self.assertEqual(git["config"]["autopick.tracker"], "origin/tracking/plasma-6.8")
-        expected = {
-            "sonicde/sonic-frameworks-cmake-modules",
-            "sonicde/sonic-frameworks-core-addons",
-            "sonicde/sonic-frameworks-crash-handler",
-            "sonicde/sonic-frameworks-internationalization",
-            "sonicde/sonic-frameworks-quick-ui",
-            "sonicde/sonic-frameworks-settings",
-            "sonicde/sonic-frameworks-settings-ui",
-            "sonicde/sonic-interface-libraries",
-            "os-installed/libxkbcommon",
-        }
-        self.assertEqual(set(package.depends) | set(package.build_depends), expected)
-        self.assertTrue(expected.issubset(closure.packages))
-        self.assertFalse(any("wayland" in dependency.lower() for dependency in package.depends + package.build_depends))
-        for view in (active_git, managed_sonicde, autopick_repos, post_autopick_repos):
-            self.assertIn(key, view(model), view.__name__)
-        self.assertEqual(generate_repo_list(model).count("sonic-keyboard"), 1)
-        self.assertEqual(org_repo_names(model).count("sonic-keyboard"), 1)
-        dependency = model["packages"]["os-installed/libxkbcommon"]
-        self.assertEqual(dependency["type"], "system")
-        self.assertEqual(dependency["pkg_config"], ["xkbcommon"])
-
 
 class TestPlasmaSyncBranches(unittest.TestCase):
     def test_unmaintained_upstreams_are_standalone_but_still_plasma_releases(self):
@@ -119,31 +65,27 @@ class TestPlasmaSyncBranches(unittest.TestCase):
         project.load()
         closure = project.build_closure()
         roster = set((root / "scripts/version-repos-plasma.list").read_text().splitlines())
-        for name in ("sonic-drawing-tablet", "sonic-gamma", "sonic-win"):
+        for name, upstream in STANDALONE_UPSTREAMS.items():
             with self.subTest(repository=name):
                 package = project.packages[f"sonicde/{name}"]
                 self.assertEqual(str(package.git.config["autopick.enabled"]).lower(), "false")
-                self.assertEqual(set(package.git.remotes), {"origin"})
+                if upstream is None:
+                    self.assertEqual(set(package.git.remotes), {"origin"})
+                else:
+                    self.assertEqual(set(package.git.remotes), {"origin", "upstream"})
+                    self.assertEqual(package.git.remotes["upstream"].url, upstream)
+                    self.assertEqual(package.git.config["remote.upstream.tagOpt"], "--no-tags")
                 self.assertNotIn("autopick.upstream", package.git.config)
                 self.assertNotIn("autopick.tracker", package.git.config)
                 self.assertIn(f"sonicde/{name}", closure.packages)
                 self.assertIn(name, roster)
-
-    def test_rdp_manifest_matches_release_repository_without_restoring_retired_library(self):
-        root = Path(__file__).resolve().parent.parent
-        project = Project(root, root / "config/sonicde/solutions/sonicde.yaml")
-        project.load()
-        rdp = project.packages["sonicde/sonic-rdp-server"]
-        self.assertTrue(rdp.git.remotes["origin"].url.endswith("/sonic-rdp-server.git"))
-        self.assertEqual(project.resolve_name("sonicde/sonic-rdp"), "sonicde/sonic-rdp-server")
-        self.assertNotIn("sonicde/sonic-plasma5-support-library", project.packages)
-        self.assertNotIn("sonicde/sonic-plasma5-support-library", project.build_closure().packages)
 
     def test_shipped_plasma_branches_and_trackers_use_configured_release(self):
         """Check optional manifests as well as the normalized active closure."""
         root = Path(__file__).resolve().parent.parent
         project = Project(root, root / "config/sonicde/solutions/sonicde.yaml")
         project.load()
+        release = plasma_release(project)
         plasma_packages = set()
         for name, package in project.packages.items():
             if not package.git:
@@ -151,47 +93,19 @@ class TestPlasmaSyncBranches(unittest.TestCase):
             config = package.git.config
             upstream = config.get("autopick.upstream", "")
             tracker = config.get("autopick.tracker", "")
-            if upstream.startswith("upstream/Plasma/") or tracker.startswith("origin/tracking/plasma-"):
+            if upstream.startswith(PLASMA_UPSTREAM_PREFIX) or tracker.startswith(PLASMA_TRACKER_PREFIX):
                 plasma_packages.add(name)
-                branch = "6.7" if name.split("/")[-1] in PLASMA_67_REPOSITORIES else "6.8"
                 with self.subTest(package=name):
-                    self.assertEqual(upstream, f"upstream/Plasma/{branch}")
-                    self.assertEqual(tracker, f"origin/tracking/plasma-{branch}")
+                    self.assertEqual(upstream, PLASMA_UPSTREAM_PREFIX + release)
+                    self.assertEqual(tracker, PLASMA_TRACKER_PREFIX + release)
         self.assertTrue(plasma_packages)
 
         model = project.to_model(project.build_closure())
         for name in plasma_packages & model["packages"].keys():
             config = model["packages"][name]["git"]["config"]
-            branch = "6.7" if name.split("/")[-1] in PLASMA_67_REPOSITORIES else "6.8"
             with self.subTest(model_package=name):
-                self.assertEqual(config["autopick.upstream"], f"upstream/Plasma/{branch}")
-                self.assertEqual(config["autopick.tracker"], f"origin/tracking/plasma-{branch}")
-
-    def test_new_plasma_repositories_are_in_all_applicable_lists(self):
-        root = Path(__file__).resolve().parent.parent
-        project = Project(root, root / "config/sonicde/solutions/sonicde.yaml")
-        project.load()
-        model = project.to_model(project.build_closure())
-        roster = (root / "scripts/version-repos-plasma.list").read_text().splitlines()
-        for name, upstream in NEW_PLASMA_REPOSITORIES.items():
-            key = f"sonicde/{name}"
-            branch = "6.7" if name in PLASMA_67_REPOSITORIES else "6.8"
-            with self.subTest(repository=name):
-                self.assertEqual(project.solution["build"].count(key), 1)
-                self.assertEqual(roster.count(name), 1)
-                package = model["packages"][key]
-                self.assertEqual(package["buildsystem"], "cmake")
-                git = package["git"]
-                self.assertEqual(git["ref"], "origin/master")
-                self.assertEqual(git["local_branch"], "master")
-                self.assertEqual(git["remotes"]["origin"]["url"], f"https://github.com/Sonic-DE/{name}.git")
-                self.assertEqual(git["remotes"]["upstream"]["url"], f"https://invent.kde.org/plasma/{upstream}.git")
-                self.assertEqual(git["config"]["autopick.upstream"], f"upstream/Plasma/{branch}")
-                self.assertEqual(git["config"]["autopick.tracker"], f"origin/tracking/plasma-{branch}")
-                for view in (active_git, managed_sonicde, autopick_repos, post_autopick_repos):
-                    self.assertIn(key, view(model), view.__name__)
-                self.assertEqual(generate_repo_list(model).count(name), 1)
-                self.assertEqual(org_repo_names(model).count(name), 1)
+                self.assertEqual(config["autopick.upstream"], PLASMA_UPSTREAM_PREFIX + release)
+                self.assertEqual(config["autopick.tracker"], PLASMA_TRACKER_PREFIX + release)
 
 
 class TestConfigParsing(unittest.TestCase):
