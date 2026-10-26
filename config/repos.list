@@ -51,13 +51,16 @@ sonic-frameworks-holidays
 sonic-frameworks-icon-themes
 sonic-frameworks-idle-tracker
 sonic-frameworks-image-formats
+sonic-frameworks-init-info
 sonic-frameworks-internationalization
 sonic-frameworks-io
 sonic-frameworks-io-extras
 sonic-frameworks-io-fuse
+sonic-frameworks-ipc
 sonic-frameworks-keybind
 sonic-frameworks-keyring
 sonic-frameworks-keyring-pam
+sonic-frameworks-logging
 sonic-frameworks-modemmanager
 sonic-frameworks-networkmanager
 sonic-frameworks-notification-settings
