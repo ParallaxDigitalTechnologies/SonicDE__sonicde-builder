@@ -113,6 +113,69 @@ for correcting the builder-owned chain.
 Qt6 and dependencies explicitly declared under `os-installed/` remain supplied
 by the operating system. They are distinct from builder-owned SonicDE packages.
 
+## Logging in SonicDE Code
+
+SonicDE code logs only through **Sonic Logging** (`sonic-frameworks-logging`,
+`Sonic::Logging`). Use it wherever possible, in new code and whenever you touch
+code that logs another way.
+
+- Declare the binary's component once, in exactly one `.cpp` of each library,
+  plugin or executable: `SONIC_LOGGING_COMPONENT("org.sonicde.<component>")`.
+- Log with `sonicDebug()`, `sonicInfo()`, `sonicWarning()`, `sonicCritical()`
+  and `sonicFatal()`. `sonicFatal()` logs a critical line and aborts.
+- Executables call `Sonic::Logging::install()` early in `main()`. A library
+  loaded into another program's process uses `SONIC_LOGGING_AUTO_INSTALL()`
+  instead.
+- Test binaries that compile logging sources declare their own component and
+  don't call `install()`.
+- Add `sonicde/sonic-frameworks-logging` to the package manifest's `depends`
+  and link `Sonic::Logging`.
+
+Replace the older methods when you find them:
+
+- `qCDebug`, `qCInfo`, `qCWarning`, `qCCritical` and `qCFatal`;
+- `Q_LOGGING_CATEGORY`, `Q_DECLARE_LOGGING_CATEGORY`,
+  `ecm_qt_declare_logging_category` and `ecm_qt_install_logging_categories`;
+- custom `qInstallMessageHandler` handlers and per-program log files.
+
+Remove the generated category headers and `.categories` files along with them.
+
+Plain `qDebug()`, `qInfo()`, `qWarning()` and `qCritical()` are only for code
+that can't depend on Sonic Logging. Keep a Qt logging category only when there
+is a concrete reason, such as an upstream API that requires one, and say why in
+a comment.
+
+## Release Notes
+
+Every SonicDE repository keeps a `RELEASE-NOTES.md` at its root that records
+what SonicDE changed in that package. **When you finish a task that changes a
+repository, add the change to that repository's `RELEASE-NOTES.md` before
+reporting the task complete.**
+
+- New entries go under `## Unreleased` at the top of the file; create that
+  heading if it isn't there. When a release is tagged, the `Unreleased`
+  heading becomes the release's version.
+- List only SonicDE's own changes, the ones that differ from upstream. Leave
+  out anything that came from an upstream sync. Tags that start with `v`, such
+  as `v6.8.0`, are upstream releases, not ours.
+- A release with no SonicDE changes keeps its heading, with the line "No
+  SonicDE-specific changes in this release; it brings the package up to date
+  with upstream."
+- Write for users, not developers. Use plain, positive, readable language that
+  says what is better for the person using SonicDE, not how the code changed.
+  Avoid class names, file paths, commit hashes and jargon.
+- Give each change its own bullet. Changes users can't see (build tooling,
+  code cleanups, version bumps, tests) get one short "Behind the scenes" bullet
+  per release instead of one each.
+
+The builder root's `RELEASE-NOTES.md` is different: it's for packagers and is
+organised by release, newest first. When a task adds, renames or removes a
+package, changes a dependency or needs packagers to act, record it under
+`## Upcoming release` in the matching subsection: "Packages added", "Packages
+renamed", "Packages removed", "Dependency changes" or "Actions". Keep the
+package index at the end current as well. When a release is tagged, rename
+"Upcoming release" to that release and add it to the table at the top.
+
 ## Adding or Renaming SonicDE Packages
 
 Release version edits and tagging are separate: `version-bump-core`,
