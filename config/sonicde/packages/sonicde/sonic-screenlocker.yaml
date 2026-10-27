@@ -37,7 +37,9 @@ depends:
     - sonicde/sonic-frameworks-idle-tracker
     - sonicde/sonic-frameworks-internationalization
     - sonicde/sonic-frameworks-io
+    - sonicde/sonic-frameworks-ipc
     - sonicde/sonic-frameworks-keybind
+    - sonicde/sonic-frameworks-logging
     - sonicde/sonic-frameworks-notifications
     - sonicde/sonic-frameworks-package
     - sonicde/sonic-frameworks-settings

@@ -19,6 +19,3 @@ buildsystem: cmake
 
 build-depends:
     - sonicde/sonic-frameworks-cmake-modules
-
-depends:
-    - sonicde/sonic-frameworks-init-info

@@ -40,6 +40,9 @@ depends:
     - sonicde/sonic-frameworks-internationalization
     - sonicde/sonic-frameworks-icon-themes
     - sonicde/sonic-frameworks-io
+    - sonicde/sonic-frameworks-init-info
+    - sonicde/sonic-frameworks-ipc
+    - sonicde/sonic-frameworks-logging
     - sonicde/sonic-frameworks-package
     - sonicde/sonic-frameworks-qml-bridge
     - sonicde/sonic-frameworks-quick-silver-style

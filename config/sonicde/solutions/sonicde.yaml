@@ -69,13 +69,16 @@ build:
     - sonicde/sonic-frameworks-icon-themes
     - sonicde/sonic-frameworks-idle-tracker
     - sonicde/sonic-frameworks-image-formats
+    - sonicde/sonic-frameworks-init-info
     - sonicde/sonic-frameworks-internationalization
     - sonicde/sonic-frameworks-io
     - sonicde/sonic-frameworks-io-extras
     - sonicde/sonic-frameworks-io-fuse
+    - sonicde/sonic-frameworks-ipc
     - sonicde/sonic-frameworks-keybind
     - sonicde/sonic-frameworks-keyring
     - sonicde/sonic-frameworks-keyring-pam
+    - sonicde/sonic-frameworks-logging
     - sonicde/sonic-frameworks-modemmanager
     - sonicde/sonic-frameworks-networkmanager
     - sonicde/sonic-frameworks-notification-settings

@@ -33,7 +33,9 @@ depends:
     - sonicde/sonic-frameworks-dbus
     - sonicde/sonic-frameworks-icon-themes
     - sonicde/sonic-frameworks-io
+    - sonicde/sonic-frameworks-ipc
     - sonicde/sonic-frameworks-keybind
+    - sonicde/sonic-frameworks-logging
     - sonicde/sonic-frameworks-notification-settings
     - sonicde/sonic-frameworks-notifications
     - sonicde/sonic-frameworks-runner
